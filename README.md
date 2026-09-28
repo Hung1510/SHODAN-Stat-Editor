@@ -53,6 +53,14 @@ How far a Guard Dog flies from you is decided by its behaviour in the game code,
 the panel edits, so it can't be changed. The AR-23 dog's bullet is the Liberator Penetrator's and
 the Hot Dog's flame damage is the Torcher's; the panel notes values that change together.
 
+**Attachments**: optics, underbarrels and muzzles, on the Attachments tab
+
+| Attachment | Stats |
+|---|---|
+| Optics, underbarrels, muzzles, shotgun chokes | Ergonomics bonus, and where the attachment has them: sway, recoil (horizontal, vertical), recoil climb (horizontal, vertical) and spread (horizontal, vertical) multipliers |
+
+An attachment's values apply to every weapon fitted with it.
+
 ## Install
 
 1. Install **Bingus Shared Loader** (v15 or newer).
@@ -128,8 +136,11 @@ share the whole setup.
 - **Barrages** can use different shells for different rounds; the section names say which rounds
   a value belongs to. Long lists scroll: Up/Down follow the chosen stat, or use the buttons under
   the list.
-- **Magazine attachments** (for example on the MP-98 Knight or SG-225 Breaker) set magazine
-  counts themselves when one is fitted.
+- **Your values win over attachments.** A weapon's magazine and heat values stay what you set,
+  whichever magazine, heatsink or canister is fitted; what you haven't changed (a magazine's
+  ergonomics, for example) still comes from the attachment. Changing a weapon's ergonomics, sway,
+  recoil or spread also cancels those of the attachments only that weapon uses (its magazines, a
+  fixed Custom muzzle brake).
 - The **armory** still shows the game's own numbers; the changes apply in play.
 - **In multiplayer** your changes exist only in your game.
 - **Other mods** that change the same stats will fight over them; use one or the other.

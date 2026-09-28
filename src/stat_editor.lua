@@ -786,7 +786,7 @@ local T_EXPLOSION, T_ORBITAL, T_STRATAGEM = 0x2AEA2592, 0x936A9C08, 0x30EB6399
 local T_HEAT, T_SPRAY, T_STATUS, T_MELEE = 0x4C981CD9, 0x8E551126, 0xC63E0B22, 0xBBA9003F
 -- later tables, in one local (the main chunk is at LuaJIT's 200-local limit)
 local TYPES = { arc_weapon = 0xB87BA9ED, arc = 0xAFDF0267, health = 0xB3915DE3, sensor = 0x14729B6A, detector = 0xFF67A367,
-                turret = 0x1EBA7593 }
+                turret = 0x1EBA7593, custom = 0xEBA8F3D0, items = 0x1E604234, deltas = 0x683E604F }
 local KINDS = {
     [T_WEAPON] = { name = 'weapon', stride = 1232, keyed = true },
     [T_MAGAZINE] = { name = 'magazine', stride = 160, keyed = true },
@@ -829,13 +829,38 @@ local KINDS = {
     [TYPES.sensor] = { name = 'sensor', stride = 44, keyed = true },
     [TYPES.detector] = { name = 'detector', stride = 24, keyed = true },
     [TYPES.turret] = { name = 'turret', stride = 76, keyed = true },
+    -- attachments: each weapon's default ones (slot, item id: +0, 10 of them), the items (one table
+    -- per group: +0 name, +8 id, +32 their deltas' resource), and the deltas: the values they set
+    [TYPES.custom] = { name = 'weapon customization', stride = 4872, keyed = true, cache = {} },
+    [TYPES.items] = { name = 'attachment items', stride = 88, tail = true, id_at = 8, groups = true, list = {} },
+    [TYPES.deltas] = { name = 'attachment deltas', stride = 1 },
     -- one table per stratagem group (orbitals, eagles, backpacks, ...), rows keyed by the id at +4
     [T_STRATAGEM] = { name = 'stratagem', stride = 400, tail = true, id_at = 4, groups = true },
 }
 -- the tables the panel waits for (stratagem groups are taken as they come)
 local KIND_ORDER = { T_WEAPON, T_MAGAZINE, T_ROUNDS, T_FIRE, T_PROJECTILE, T_DAMAGE, T_BEAM_WEAPON, T_BEAM,
                      T_EXPLOSION, T_ORBITAL, T_HEAT, T_SPRAY, T_STATUS, T_MELEE, TYPES.arc_weapon, TYPES.arc,
-                     TYPES.health, TYPES.sensor, TYPES.detector, TYPES.turret }
+                     TYPES.health, TYPES.sensor, TYPES.detector, TYPES.turret, TYPES.custom, TYPES.deltas }
+
+-- The deltas table: five arrays (pointer, count) head the payload: resource -> slot (u64, u32),
+-- slot -> components (count, first), component (index, first delta, count), delta (offset in the
+-- component, size, data offset), the data. Indexed by resource; `layout` keeps the arrays' offsets.
+KINDS[TYPES.deltas].parse = function(blob, stride, spec, address)
+    local at = {}
+    for k = 0, 4 do
+        local lo, hi = u32(blob, k * 16), u32(blob, k * 16 + 4)
+        at[k] = lo and hi and lo + hi * 4294967296 - address - HEADER_BYTES
+        if not at[k] or at[k] < 80 or at[k] >= #blob then return nil, 'delta layout does not match this build' end
+    end
+    local index, entries, count = {}, 0, u32(blob, 8) or 0
+    if at[0] + count * 16 > #blob then return nil, 'delta layout does not match this build' end
+    for k = 0, count - 1 do
+        local key = blob:sub(at[0] + k * 16 + 1, at[0] + k * 16 + 8)
+        if key ~= string.rep('\0', 8) then index[key] = u32(blob, at[0] + k * 16 + 8); entries = entries + 1 end
+    end
+    spec.layout = at
+    return index, entries
+end
 
 -- kind -> { payload = size, index = key -> payload offset, entries = n, copies = { block address },
 -- type = table type }; each stratagem group is under its own key (listed in stratagem_groups)
@@ -935,7 +960,7 @@ local function read_field(f)
     if not bits then return nil end
     local value = bits
     if f.storage == 'f32' then value = bits_to_f32(bits) end
-    if value ~= value or value < 0 or value > f.limit then return nil end   -- implausible: layout moved
+    if value ~= value or value < (f.signed and -f.limit or 0) or value > f.limit then return nil end   -- implausible: layout moved
     return value
 end
 
@@ -950,10 +975,11 @@ local function default_of(f)
 end
 
 -- Writes every copy of the table; read back, or rolled back.
-local function write_field(f, value)
+local function write_field(f, value, plain)
     local entry = tables[f.kind]
     if not entry then return false, 'table not found' end
     if read_field(f) == nil then return false, 'current value implausible' end
+    default_of(f)
     local bytes, done = encode(f, value), {}
     for _, block in ipairs(entry.copies) do
         local at = block + HEADER_BYTES + f.offset
@@ -963,6 +989,15 @@ local function write_field(f, value)
             return false, 'write failed at ' .. hex(at)
         end
         done[#done + 1] = { at, before }
+    end
+    -- its copies (the other attachments of its line, the weapon's own record) take the value; the
+    -- game's value puts each back to its own
+    if not plain and f.mirrors then
+        local own = value == defaults[f.key]
+        for _, m in pairs(f.mirrors) do
+            local d = default_of(m)
+            if d ~= nil then write_field(m, own and d or (m.neutral or value), true) end
+        end
     end
     return true
 end
@@ -999,6 +1034,168 @@ local function part(id, kind, offset, storage, limit)
     return { id = id, field = field_at(kind, offset, storage, limit) }
 end
 
+local function read_text(address)
+    local bytes = address and address > 65536 and api.read(address, 96)
+    local text = bytes and bytes:match('^([^%z]*)%z')
+    if not text or #text < 3 or text:find('[^\32-\126]') then return nil end
+    return text
+end
+
+-- Attachment items, per group table (`prepare`, once): their names, in table order, and lines: the
+-- items of one weapon line, listed together, each starting at a new family ('Rifle 5,5x50mm.') or a
+-- 'Standard' item. `words`: an item's deltas, 'component:offset' -> payload offset in the deltas, for
+-- magazine (component 5) and heat (266) values and the weapon's stat bonuses (236, +956: 8 of type,
+-- value); `mods`: where an item's stat modifiers are, type -> value (0 ergonomics, added; the rest
+-- multiply: 1 sway, 2 / 4 recoil horizontal / vertical, 10 / 12 recoil climb, 14 / 16 spread; MODS: their rows).
+KINDS[TYPES.items].prepare = function(t)
+    if t.lines then return end
+    t.lines, t.order, t.names, t.labels = {}, {}, {}, {}
+    local top, line, last = t.copies[1] + HEADER_BYTES, 0, nil
+    for k = 0, (peek4(top + 8) or 0) - 1 do
+        local r = 16 + k * 88
+        local lo, hi = peek4(top + r), peek4(top + r + 4)
+        local label = read_text(lo and hi and lo + hi * 4294967296) or ''
+        local name = label:lower()
+        local family = name:match('^([^%.]+)%.') or name:match('^(%S+ %S+)') or name
+        if family ~= last or name:find('standard') then line = line + 1 end
+        last, t.lines[r], t.order[#t.order + 1], t.names[r] = family, line, r, name
+        t.labels[r] = label:gsub('%a+', function(word)
+            if #word <= 2 or word ~= word:upper() or word:find('^MK') then return word end
+            return word:sub(1, 1) .. word:sub(2):lower()
+        end)
+    end
+end
+
+KINDS[TYPES.items].find = function(id)
+    for _, group in ipairs(id and id ~= 0 and KINDS[TYPES.items].list or {}) do
+        local t = tables[group]
+        if t and t.index[id] then KINDS[TYPES.items].prepare(t); return t, t.index[id] end
+    end
+end
+
+KINDS[TYPES.items].words = function(t, r)
+    local deltas, at, out = tables[TYPES.deltas], KINDS[TYPES.deltas].layout, {}
+    local slot = deltas and at and deltas.index[api.read(t.copies[1] + HEADER_BYTES + r + 32, 8) or '']
+    if not slot then return out end
+    local d = deltas.copies[1] + HEADER_BYTES
+    local count, first = peek4(d + at[1] + slot * 8), peek4(d + at[1] + slot * 8 + 4)
+    for c = first or 0, (first or 0) + (count or 0) - 1 do
+        local comp = peek4(d + at[2] + c * 12)
+        if comp == 5 or comp == 266 or comp == 236 then
+            local fd, nd = peek4(d + at[2] + c * 12 + 4), peek4(d + at[2] + c * 12 + 8)
+            for x = fd, fd + nd - 1 do
+                local offset, size, data = peek4(d + at[3] + x * 12), peek4(d + at[3] + x * 12 + 4), peek4(d + at[3] + x * 12 + 8)
+                for w = 0, size - 4, 4 do
+                    if comp ~= 236 or (offset + w >= 956 and offset + w < 1020) then
+                        out[comp .. ':' .. (offset + w)] = at[4] + data + w
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
+KINDS[TYPES.items].mods = function(words)
+    local d, out = tables[TYPES.deltas].copies[1] + HEADER_BYTES, {}
+    for e = 0, 7 do
+        local kind, value = words['236:' .. (956 + e * 8)], words['236:' .. (960 + e * 8)]
+        local type = kind and value and peek4(d + kind)
+        if type and type < 18 and not out[type] then out[type] = value end
+    end
+    return out
+end
+
+KINDS[TYPES.items].MODS = {
+    { 0, 'ergonomics', 'Ergonomics bonus', -100, 100, 1, 5 },
+    { 1, 'sway', 'Sway multiplier', 0, 10, 0.05, 0.25 },
+    { 2, 'recoil_h', 'Recoil multiplier (horizontal)', 0, 10, 0.05, 0.25 },
+    { 4, 'recoil_v', 'Recoil multiplier (vertical)', 0, 10, 0.05, 0.25 },
+    { 10, 'climb_h', 'Climb multiplier (horizontal)', 0, 10, 0.05, 0.25 },
+    { 12, 'climb_v', 'Climb multiplier (vertical)', 0, 10, 0.05, 0.25 },
+    { 14, 'spread_h', 'Spread multiplier (horizontal)', 0, 10, 0.05, 0.25 },
+    { 16, 'spread_v', 'Spread multiplier (vertical)', 0, 10, 0.05, 0.25 },
+}
+
+-- A weapon's attachments set magazine and heat values of their own over the weapon's (its slot 5 item:
+-- magazine, heatsink, canister) and modify its stats. For the weapon entity `key`: 'component:offset' ->
+-- { lead = the default attachment's value (payload offset in the deltas; nil: it sets none), copies =
+-- that value in every attachment of the line }, and mods = type -> the stat modifiers of the attachments
+-- only its line uses (its slot 5 line, its Custom muzzle brake).
+local function attachments(key)
+    local cache = KINDS[TYPES.custom].cache
+    if cache[key] ~= nil then return cache[key] end
+    cache[key] = false
+    local custom, spec = tables[TYPES.custom], KINDS[TYPES.items]
+    local row = custom and tables[TYPES.deltas] and KINDS[TYPES.deltas].layout and custom.index[key]
+    if not row then return false end
+    local base, fitted = custom.copies[1] + HEADER_BYTES + row, {}
+    for slot = 0, 9 do
+        local kind = peek4(base + slot * 8)
+        if kind then fitted[kind] = peek4(base + slot * 8 + 4) end
+    end
+    local out, t, mine = { mods = {} }, spec.find(fitted[5])
+    local function add(mods)
+        for type, value in pairs(mods) do
+            out.mods[type] = out.mods[type] or {}
+            out.mods[type][#out.mods[type] + 1] = value
+        end
+    end
+    for _, r in ipairs(t and t.order or {}) do
+        if t.lines[r] == t.lines[mine] then
+            local words = spec.words(t, r)
+            for word, data in pairs(words) do
+                if not word:find('^236:') then
+                    local link = out[word] or { copies = {} }
+                    out[word] = link
+                    link.copies[#link.copies + 1] = data
+                    if r == mine then link.lead = data end
+                end
+            end
+            add(spec.mods(words))
+        end
+    end
+    local muzzle, at = spec.find(fitted[4])
+    if muzzle and muzzle.names[at]:find('custom') then add(spec.mods(spec.words(muzzle, at))) end
+    cache[key] = out
+    return out
+end
+
+-- The Attachments tab: every optic, underbarrel and muzzle with an ergonomics, sway, recoil or spread modifier,
+-- as an entry of its own (they apply to every weapon fitted with it). Custom muzzle brakes follow their weapon.
+KINDS[TYPES.items].build = function()
+    for k = #weapons, 1, -1 do
+        if weapons[k].attachment then by_hash[weapons[k].hash] = nil; table.remove(weapons, k) end
+    end
+    local spec, list = KINDS[TYPES.items], {}
+    local kinds = { [1] = 'Underbarrel', [2] = 'Optic', [4] = 'Muzzle' }
+    for _, group in ipairs(spec.list) do
+        local t = tables[group]
+        spec.prepare(t)
+        local top = t.copies[1] + HEADER_BYTES
+        for _, r in ipairs(t.order) do
+            local lo, hi, n = peek4(top + r + 48), peek4(top + r + 52), peek4(top + r + 56)
+            local slot = lo and hi and n and n > 0 and n < 8 and peek4(lo + hi * 4294967296)
+            local mods = kinds[slot] and not t.names[r]:find('custom') and spec.mods(spec.words(t, r))
+            local any = false
+            for _, m in ipairs(spec.MODS) do any = any or (mods and mods[m[1]] ~= nil) end
+            local hash = any and string.format('FFFFFFFF%08X', peek4(top + r + 8))
+            if hash and not by_hash[hash] then
+                list[#list + 1] = { name = t.labels[r], slot = 'Attachments', hash = hash, rows = {}, by_id = {},
+                                    note = kinds[slot] .. '. Its modifiers apply to every weapon fitted with it.',
+                                    attachment = { mods = mods, order = slot == 2 and 1 or slot == 1 and 2 or 3 } }
+                by_hash[hash] = list[#list]
+            end
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.attachment.order ~= b.attachment.order then return a.attachment.order < b.attachment.order end
+        return a.name:lower() < b.name:lower()
+    end)
+    for _, entry in ipairs(list) do weapons[#weapons + 1] = entry end
+    log('attachments: ' .. #list .. ' with ergonomics, sway, recoil or spread modifiers listed')
+end
+
 -- Adds a damage row's stats (the first `count`, default all) to `entry`, ids `prefix` .. stat id.
 -- `what` names the damage / durable rows ('Explosion' -> 'Explosion damage'); `strike`: steps of 10 / 100 for those.
 local function damage_rows(entry, section, prefix, drow, what, count, strike)
@@ -1020,6 +1217,27 @@ local function resolve_gun(weapon, key)
     local function record(kind)
         local entry = tables[kind]
         return entry and entry.index[key]
+    end
+    -- a magazine / heat value an attachment of the weapon's line also sets: the default attachment's
+    -- copy leads (else the weapon's own), and every other copy follows an edit
+    local ok, links = pcall(attachments, key)
+    if not ok then log('attachments of ' .. weapon.name .. ': ' .. tostring(links)) end
+    links = ok and weapon.key == key and links
+    local function linked(kind, at, offset, storage, limit)
+        local own = field_at(kind, at + offset, storage, limit)
+        local link = links and links[(kind == T_MAGAZINE and 5 or 266) .. ':' .. offset]
+        if not link then return own end
+        local lead = link.lead and field_at(TYPES.deltas, link.lead, storage, limit) or own
+        lead.mirrors = lead.mirrors or {}
+        for _, o in ipairs(link.copies) do
+            local f = field_at(TYPES.deltas, o, storage, limit)
+            if f ~= lead then lead.mirrors[f.key] = f end
+        end
+        if own ~= lead then lead.mirrors[own.key] = own end
+        for _, f in pairs(lead.mirrors) do
+            if f.users[#f.users] ~= weapon then f.users[#f.users + 1] = weapon end
+        end
+        return lead
     end
     local projectile = nil
     local rounds, fire = record(T_ROUNDS), record(T_FIRE)
@@ -1159,7 +1377,8 @@ local function resolve_gun(weapon, key)
     local magazine = record(T_MAGAZINE)
     if magazine then
         local function mag(id, label, offset, min, max, big)
-            add_row(weapon, 'Ammo', id, label, 'u32', { part(id, T_MAGAZINE, magazine + offset, 'u32', 100000) }, min, max, 1, big)
+            add_row(weapon, 'Ammo', id, label, 'u32', { { id = id, field = linked(T_MAGAZINE, magazine, offset, 'u32', 100000) } },
+                    min, max, 1, big)
         end
         mag('capacity', 'Magazine size', 136, 1, 9999, 10)
         mag('mags_start', 'Starting magazines', 140, 0, 999, 5)
@@ -1181,19 +1400,19 @@ local function resolve_gun(weapon, key)
     -- +140 cooling per second while overheated, +144 (byte) overheat needs a new heatsink
     local heat = record(T_HEAT)
     if heat then
-        local function hf(offset) return field_at(T_HEAT, heat + offset, 'f32', 1000000) end
+        local function hf(offset) return linked(T_HEAT, heat, offset, 'f32', 1000000) end
         local reload = read_field(field_at(T_HEAT, heat + 144, 'u32', 4294967295))
         reload = reload and reload % 256 ~= 0
         if reload then
             local function sink(id, label, offset)
-                add_row(weapon, 'Ammo', id, label, 'u32', { part(id, T_HEAT, heat + offset, 'u32', 100000) }, 0, 999, 1, 5)
+                add_row(weapon, 'Ammo', id, label, 'u32', { { id = id, field = linked(T_HEAT, heat, offset, 'u32', 100000) } }, 0, 999, 1, 5)
             end
             sink('heatsinks_start', 'Starting heatsinks', 84)
             sink('heatsinks_supply', 'Heatsinks from supply', 88)
             sink('heatsinks_max', 'Max spare heatsinks', 92)
         end
         local function h(id, label, offset, small, big)
-            add_row(weapon, 'Heat', id, label, 'f32', { part(id, T_HEAT, heat + offset, 'f32', 1000000) }, 0, 100000, small, big)
+            add_row(weapon, 'Heat', id, label, 'f32', { { id = id, field = hf(offset) } }, 0, 100000, small, big)
         end
         h('heat_capacity', 'Overheat threshold', 96, 1, 10)
         for _, g in ipairs({ { 'heat_shot', 'Heat per shot', 116 }, { 'heat_second', 'Heat per second firing', 120 } }) do
@@ -1213,7 +1432,7 @@ local function resolve_gun(weapon, key)
         local function cool(id, label, offset, recovered)
             local s = span(recovered)
             if not s or s <= 0 then return end
-            local row = add_row(weapon, 'Heat', id, label, 'f32', { part(id, T_HEAT, heat + offset, 'f32', 1000000) }, 0.1, 3600, 0.5, 5)
+            local row = add_row(weapon, 'Heat', id, label, 'f32', { { id = id, field = hf(offset) } }, 0.1, 3600, 0.5, 5)
             row.span = function() return span(recovered) end
             row.span_default = function() return span_default(recovered) end
         end
@@ -1223,12 +1442,25 @@ local function resolve_gun(weapon, key)
     local data = record(T_WEAPON)
     if data then
         local function w(id, offset) return part(id, T_WEAPON, data + offset, 'f32', 100000) end
-        add_row(weapon, 'Handling', 'recoil_h', 'Recoil (horizontal)', 'f32', { w('recoil_dh', 0), w('recoil_ch', 28) }, 0, 500, 1, 5)
-        add_row(weapon, 'Handling', 'recoil_v', 'Recoil (vertical)', 'f32', { w('recoil_dv', 4), w('recoil_cv', 32) }, 0, 500, 1, 5)
-        add_row(weapon, 'Handling', 'spread_h', 'Spread (horizontal)', 'f32', { w('spread_h', 84) }, 0, 1000, 1, 10)
-        add_row(weapon, 'Handling', 'spread_v', 'Spread (vertical)', 'f32', { w('spread_v', 88) }, 0, 1000, 1, 10)
-        add_row(weapon, 'Handling', 'sway', 'Sway multiplier', 'f32', { w('sway', 104) }, 0, 100, 0.1, 0.5)
-        add_row(weapon, 'Handling', 'ergonomics', 'Ergonomics', 'f32', { w('ergonomics', 356) }, 0, 1000, 1, 5)
+        -- the modifiers of the attachments only its line uses follow an edit (ergonomics to 0, the rest to 1)
+        local function follow(p, types, neutral)
+            for _, type in ipairs(types) do
+                for _, offset in ipairs(links and links.mods[type] or {}) do
+                    local m = field_at(TYPES.deltas, offset, 'f32', 1000)
+                    m.signed, m.neutral = type == 0, neutral
+                    p.field.mirrors = p.field.mirrors or {}
+                    p.field.mirrors[m.key] = m
+                    if m.users[#m.users] ~= weapon then m.users[#m.users + 1] = weapon end
+                end
+            end
+            return p
+        end
+        add_row(weapon, 'Handling', 'recoil_h', 'Recoil (horizontal)', 'f32', { follow(w('recoil_dh', 0), { 2, 10 }, 1), w('recoil_ch', 28) }, 0, 500, 1, 5)
+        add_row(weapon, 'Handling', 'recoil_v', 'Recoil (vertical)', 'f32', { follow(w('recoil_dv', 4), { 4, 12 }, 1), w('recoil_cv', 32) }, 0, 500, 1, 5)
+        add_row(weapon, 'Handling', 'spread_h', 'Spread (horizontal)', 'f32', { follow(w('spread_h', 84), { 14 }, 1) }, 0, 1000, 1, 10)
+        add_row(weapon, 'Handling', 'spread_v', 'Spread (vertical)', 'f32', { follow(w('spread_v', 88), { 16 }, 1) }, 0, 1000, 1, 10)
+        add_row(weapon, 'Handling', 'sway', 'Sway multiplier', 'f32', { follow(w('sway', 104), { 1 }, 1) }, 0, 100, 0.1, 0.5)
+        add_row(weapon, 'Handling', 'ergonomics', 'Ergonomics', 'f32', { follow(w('ergonomics', 356), { 0 }, 0) }, 0, 1000, 1, 5)
     end
 end
 
@@ -1243,13 +1475,6 @@ local FAMILY_NOTE = { orbital = 'Orbital strike.', eagle = 'Eagle strike. The re
                       support = 'Support weapon drop; the weapon itself is under Support.' }
 
 local function id_hex(id) return string.format('%08X%08X', 0, id) end
-
-local function read_text(address)
-    local bytes = address and address > 65536 and api.read(address, 96)
-    local text = bytes and bytes:match('^([^%z]*)%z')
-    if not text or #text < 3 or text:find('[^\32-\126]') then return nil end
-    return text
-end
 
 -- 'BACKPACK. GUARD DOG (Drone)' -> 'backpack', 'Guard Dog (Drone)'
 local function pretty(debug_name)
@@ -1267,7 +1492,7 @@ local function build_stratagems()
     end
     local guns, sentries = {}, {}
     for _, w in ipairs(weapons) do
-        guns[w.key] = true
+        if w.key then guns[w.key] = true end
         if w.slot == 'Stratagems' then
             w.sentry_defs = {}
             local body = KINDS[TYPES.health].units[w.hash]
@@ -1436,6 +1661,17 @@ end
 local function resolve(weapon)
     weapon.rows, weapon.by_id = {}, {}
     if weapon.stratagem then resolve_stratagem(weapon); return end
+    if weapon.attachment then
+        for _, m in ipairs(KINDS[TYPES.items].MODS) do
+            local offset = weapon.attachment.mods[m[1]]
+            if offset then
+                local f = field_at(TYPES.deltas, offset, 'f32', 1000)
+                f.signed = m[4] < 0
+                add_row(weapon, 'Attachment', m[2], m[3], 'f32', { { id = m[2], field = f } }, m[4], m[5], m[6], m[7])
+            end
+        end
+        return
+    end
     -- sentries and emplacements (listed as weapons on the Stratagems tab): their body, then their gun
     if weapon.slot == 'Stratagems' then
         local parts = {}
@@ -1453,6 +1689,7 @@ end
 local function resolve_some(progress, deadline)
     if progress.next == 1 then
         for _, f in pairs(fields) do f.users = {} end
+        KINDS[TYPES.custom].cache = {}
     end
     while progress.next <= #weapons do
         resolve(weapons[progress.next])
@@ -1461,9 +1698,12 @@ local function resolve_some(progress, deadline)
     end
     if progress.next <= #weapons then return false end
     local usable, strats = 0, 0
+    state.attachments = 0
     for _, weapon in ipairs(weapons) do
         if #weapon.rows > 0 then
-            if weapon.stratagem then strats = strats + 1 else usable = usable + 1 end
+            if weapon.stratagem then strats = strats + 1
+            elseif weapon.attachment then state.attachments = (state.attachments or 0) + 1
+            else usable = usable + 1 end
         end
     end
     state.weapons, state.stratagems = usable, strats
@@ -1626,6 +1866,8 @@ local progress = nil
 local function become_ready(final)
     local ok, why = pcall(build_stratagems)
     if not ok then log('stratagems: not listed: ' .. tostring(why)) end
+    ok, why = pcall(KINDS[TYPES.items].build)
+    if not ok then log('attachments: not listed: ' .. tostring(why)) end
     progress = { next = 1 }
     pending, apply_at = {}, 1
     for _, o in ipairs(overrides) do pending[#pending + 1] = { hash = o.hash, id = o.id, value = o.value } end
@@ -1647,7 +1889,8 @@ local function prepare(deadline)
             log('stratagem ' .. w.name .. ' (' .. w.hash .. '): ' .. #w.rows .. ' rows, ' .. #w.stratagem.payloads .. ' payload(s)')
         end
     end
-    set_status('ready', state.weapons .. ' weapons and ' .. (state.stratagems or 0) .. ' stratagems editable; ' ..
+    set_status('ready', state.weapons .. ' weapons, ' .. (state.stratagems or 0) .. ' stratagems and ' ..
+               (state.attachments or 0) .. ' attachments editable; ' ..
                state.applied .. ' saved value(s) applied' ..
                (#pending > 0 and (', ' .. #pending .. ' waiting') or '') ..
                (#missing > 0 and ('; tables not found: ' .. table.concat(missing, ', ')) or ''))
@@ -1662,9 +1905,9 @@ end
 local function handle_table(address, kind, payload, blob)
     local spec = KINDS[kind]
     if not spec or parsed_blocks[address] then return end
-    local parse = spec.keyed and parse_keyed or parse_rows
+    local parse = spec.parse or (spec.keyed and parse_keyed or parse_rows)
     local started = api.now()
-    local index, info = parse(blob, spec.stride, spec)
+    local index, info = parse(blob, spec.stride, spec, address)
     local took = (api.now() - started) * 1000
     if not index then
         log(spec.name .. ' table at ' .. hex(address) .. ' not usable yet: ' .. info)
@@ -1673,8 +1916,9 @@ local function handle_table(address, kind, payload, blob)
     local table_type = kind
     if spec.groups then
         -- each group is its own table; copies of one group have its size and first row
-        kind = 'stratagems ' .. payload .. ' ' .. (u32(blob, 16 + (spec.id_at or 0)) or 0)
-        if not tables[kind] then stratagem_groups[#stratagem_groups + 1] = kind end
+        local list = kind == T_STRATAGEM and stratagem_groups or spec.list
+        kind = (kind == T_STRATAGEM and 'stratagems' or spec.name) .. ' ' .. payload .. ' ' .. (u32(blob, 16 + (spec.id_at or 0)) or 0)
+        if not tables[kind] then list[#list + 1] = kind end
     end
     local entry = tables[kind]
     if entry and entry.payload ~= payload then
@@ -1714,6 +1958,7 @@ end
 local function rescan()
     log('a settings table moved; scanning again')
     tables, parsed_blocks, stratagem_groups = {}, {}, {}
+    KINDS[TYPES.items].list = {}
     state.tables = 0
     set_status('searching', 'a table moved; scanning again')
     if hub then hub.wake() end
@@ -1804,7 +2049,7 @@ local ui = { open = false, tab = 'Primary', page = 1, row = 1, scroll = 1, weapo
              editing = nil, confirm = nil,    -- a preset name being typed; an overwrite / delete to confirm
              search = { text = '', active = false },    -- the list's search (active: being typed)
              value = nil }   -- a value being typed: { n = row, weapon, text, fresh (the first key replaces it) }
-local TABS = { 'Primary', 'Secondary', 'Support', 'Stratagems', 'Presets' }
+local TABS = { 'Primary', 'Secondary', 'Support', 'Stratagems', 'Attachments', 'Presets' }
 local LIST_ROWS = 27
 local W, H = 1000, 980       -- panel size in its own units
 
@@ -2411,7 +2656,7 @@ local function draw(width, height)
     end
 
     for n, tab in ipairs(TABS) do
-        button('tab:' .. tab, tab, 16 + (n - 1) * 118, 52, 112, 32, true, ui.tab == tab)
+        button('tab:' .. tab, tab, 16 + (n - 1) * 111, 52, 104, 32, true, ui.tab == tab)
     end
     button('reset_weapon', 'Reset weapon', W - 16 - 150 - 8 - 130, 52, 150, 32, ui.weapon ~= nil and modified(ui.weapon))
     button('reset_all', 'Reset all', W - 16 - 130, 52, 130, 32, #overrides > 0)
