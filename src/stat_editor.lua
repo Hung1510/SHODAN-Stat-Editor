@@ -1,6 +1,6 @@
 -- HD2-Addon: mods/shodan/stat_editor
--- SHODAN Stat Editor v1.3.0 by SHODAN. Requires Bingus Shared Loader (API 1).
-local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '1.3.0', author = 'SHODAN', log = 'SHODANStatEditor.log' }
+-- SHODAN Stat Editor v1.4.0 by SHODAN. Requires Bingus Shared Loader (API 1).
+local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '1.4.0', author = 'SHODAN', log = 'SHODANStatEditor.log' }
 if rawget(_G, MOD.global) then return end
 
 -- Weapons: name, loadout slot, entity hash (from HD2Runtime's capability catalogs), variant note,
@@ -29,7 +29,7 @@ local WEAPONS = {
     { 'LAS-13 Trident', 'Primary', '3C86E871923F3970', '' },
     { 'LAS-16 Sickle', 'Primary', '8645F167B3C813A2', '' },
     { 'LAS-17 Double-Edge Sickle', 'Primary', '295BEB26DC4F8FF1', '' },
-    { 'LAS-5 Scythe', 'Primary', '27EE1ED8F6FB6356', 'The Scythe you carry. The Guard Dog Rover mounts this same entry, so its laser may change too.' },
+    { 'LAS-5 Scythe', 'Primary', '27EE1ED8F6FB6356', 'The Scythe you carry.' },
     { 'LAS-5 Scythe (unidentified twin)', 'Primary', '7E3145A5BAA4B948', 'A separate weapon built on the Scythe, with its own name and a targeting part. Not the Scythe.' },
     { 'M7S SMG', 'Primary', 'BE70EE0D8D44028E', '' },
     { 'M90A Shotgun', 'Primary', '90DDC374F4E3D756', '' },
@@ -137,6 +137,7 @@ local WEAPONS = {
     { 'SG-88 Break-Action Shotgun', 'Support', '52071F49263415E4', '' },
     { 'StA-X3 W.A.S.P. Launcher', 'Support', 'CC786F6491FE7E65', '' },
     { 'TX-41 Sterilizer', 'Support', '88F61AFFF48AC8A4', '' },
+    { 'A/ARC-3 Tesla Tower', 'Stratagems', '74599E56F72F9D7E', 'The Tesla Tower sentry\'s arc. Its cooldown is not editable here.' },
 }
 
 -- Stratagems: id, name, family, payload entities, records { kind (P projectile / X explosion /
@@ -209,8 +210,9 @@ local STRATAGEMS = {
 -- weapon's entity hash to its record, row tables map a row id to its row. A weapon's damage
 -- comes through its projectile: rounds record (+64), default attachment, or fire mode (+0) -> projectile row
 -- (+60) -> damage row; a beam weapon's through its beam: beam component (+0 beam type) -> beam
--- row (+12) -> damage row; a flame / gas weapon's through its spray component (+200) -> damage
--- row. A damage row's status effects (+44: 4 x type, strength) name the burn / gas damage row
+-- row (+12) -> damage row; a flame / gas weapon's through its spray component (+200), a melee
+-- weapon's through its melee component (+12) -> damage row; an arc weapon's through its arc
+-- component (+0 arc type) -> arc row (+36) -> damage row. A damage row's status effects (+44: 4 x type, strength) name the burn / gas damage row
 -- (status row +44). Explosive projectiles name their explosion rows (radii). Several weapons can share one projectile or damage row; the panel says
 -- so, because editing it changes all of them.
 
@@ -775,7 +777,9 @@ local T_WEAPON, T_MAGAZINE, T_ROUNDS = 0x88E4DBB1, 0xFB8D88A3, 0x66081072
 local T_FIRE, T_PROJECTILE, T_DAMAGE = 0x45171B68, 0xBD4042C2, 0xE0A72CF0
 local T_BEAM_WEAPON, T_BEAM = 0xF0721C2C, 0xC5085606
 local T_EXPLOSION, T_ORBITAL, T_STRATAGEM = 0x2AEA2592, 0x936A9C08, 0x30EB6399
-local T_HEAT, T_SPRAY, T_STATUS = 0x4C981CD9, 0x8E551126, 0xC63E0B22
+local T_HEAT, T_SPRAY, T_STATUS, T_MELEE = 0x4C981CD9, 0x8E551126, 0xC63E0B22, 0xBBA9003F
+-- later tables, in one local (the main chunk is at LuaJIT's 200-local limit)
+local TYPES = { arc_weapon = 0xB87BA9ED, arc = 0xAFDF0267, health = 0xB3915DE3, sensor = 0x14729B6A, detector = 0xFF67A367 }
 local KINDS = {
     [T_WEAPON] = { name = 'weapon', stride = 1232, keyed = true },
     [T_MAGAZINE] = { name = 'magazine', stride = 160, keyed = true },
@@ -789,14 +793,30 @@ local KINDS = {
     [T_ORBITAL] = { name = 'orbital beam', stride = 552, keyed = true },
     [T_HEAT] = { name = 'weapon heat', stride = 592, keyed = true },
     [T_SPRAY] = { name = 'spray weapon', stride = 224, keyed = true },
+    -- explosions: melee weapons whose strike explodes, by entity -> explosion id (the Breaching
+    -- Hammer's; no settings table links it, the game sets it off from the strike itself)
+    [T_MELEE] = { name = 'melee weapon', stride = 192, keyed = true, explosions = { ['5F3EC9BDA2BD8553'] = 19 } },
     -- names: the status effects that deal damage, by type (the game's debug names Fire, Gas)
     [T_STATUS] = { name = 'status effect', stride = 152, tail = true, names = { [5] = 'Burning', [32] = 'Heavy burning', [42] = 'Gas', [43] = 'Gas' } },
+    [TYPES.arc_weapon] = { name = 'arc weapon', stride = 80, keyed = true },
+    [TYPES.arc] = { name = 'arc', stride = 104 },
+    -- drones: the Guard Dog stratagems (by stratagem id) -> name, drone entity, its gun entity.
+    -- Nothing in the settings links a Guard Dog backpack to its drone, so they are listed here.
+    [TYPES.health] = { name = 'health', stride = 22096, keyed = true, drones = {
+        [485866824] = { 'AX/AR-23 "Guard Dog"', 'A0FF2F9A0CA6992A', 'A32621E3BDE13379' },
+        [951988742] = { 'AX/LAS-5 "Guard Dog" Rover', '5BEEC97F4C7F4AE9', '2C66C201B2543D2C' },
+        [5185868] = { 'AX/TX-13 "Guard Dog" Dog Breath', 'B9BAF571FC8F9959', 'B729A2BA153BCAED' },
+        [1125307795] = { 'AX/FLAM-75 "Guard Dog" Hot Dog', '979E9BC6D48D1FC6', '65CD4325BA23F3C6' },
+        [1692135420] = { 'AX/ARC-3 "Guard Dog" K-9', '4B071633584E4594', 'A0532C3616528CBF' } } },
+    [TYPES.sensor] = { name = 'sensor', stride = 44, keyed = true },
+    [TYPES.detector] = { name = 'detector', stride = 24, keyed = true },
     -- one table per stratagem group (orbitals, eagles, backpacks, ...), rows keyed by the id at +4
     [T_STRATAGEM] = { name = 'stratagem', stride = 400, tail = true, id_at = 4, groups = true },
 }
 -- the tables the panel waits for (stratagem groups are taken as they come)
 local KIND_ORDER = { T_WEAPON, T_MAGAZINE, T_ROUNDS, T_FIRE, T_PROJECTILE, T_DAMAGE, T_BEAM_WEAPON, T_BEAM,
-                     T_EXPLOSION, T_ORBITAL, T_HEAT, T_SPRAY, T_STATUS }
+                     T_EXPLOSION, T_ORBITAL, T_HEAT, T_SPRAY, T_STATUS, T_MELEE, TYPES.arc_weapon, TYPES.arc,
+                     TYPES.health, TYPES.sensor, TYPES.detector }
 local ZERO8 = string.rep('\0', 8)
 
 -- kind -> { payload = size, index = key -> payload offset, entries = n, copies = { block address },
@@ -997,6 +1017,22 @@ local function resolve_gun(weapon, key)
         local id = read_field(field_at(T_SPRAY, spray + 200, 'u32', 100000))
         drow = id and tables[T_DAMAGE] and tables[T_DAMAGE].index[id]
     end
+    -- melee weapons: melee component (+12 damage row), damage per strike
+    local melee = not drow and record(T_MELEE)
+    if melee then
+        local id = read_field(field_at(T_MELEE, melee + 12, 'u32', 100000))
+        drow = id and tables[T_DAMAGE] and tables[T_DAMAGE].index[id]
+    end
+    -- arc weapons: arc component (+0 arc type, +4 fire rate) -> arc row (+8 range, +28 chain
+    -- length, +32 chain split, +36 damage row)
+    local arc = not drow and record(TYPES.arc_weapon)
+    local arow = nil
+    if arc then
+        local kind = read_field(field_at(TYPES.arc_weapon, arc, 'u32', 100000))
+        arow = kind and tables[TYPES.arc] and tables[TYPES.arc].index[kind]
+        local id = arow and read_field(field_at(TYPES.arc, arow + 36, 'u32', 100000))
+        drow = id and tables[T_DAMAGE] and tables[T_DAMAGE].index[id]
+    end
     weapon.projectile, weapon.damage_row = prow and projectile or nil, nil
     if drow then
         weapon.damage_row = true
@@ -1044,6 +1080,20 @@ local function resolve_gun(weapon, key)
             end
         end
     end
+    if arow then
+        add_row(weapon, 'Arc', 'arc_range', 'Range (m)', 'f32', { part('arc_range', TYPES.arc, arow + 8, 'f32', 100000) },
+                0, 1000, 1, 5)
+        add_row(weapon, 'Arc', 'arc_chain', 'Chain length', 'u32', { part('arc_chain', TYPES.arc, arow + 28, 'u32', 1000) },
+                0, 20, 1, 1)
+        add_row(weapon, 'Arc', 'arc_split', 'Chain split', 'u32', { part('arc_split', TYPES.arc, arow + 32, 'u32', 1000) },
+                0, 20, 1, 1)
+        local rate = read_field(field_at(TYPES.arc_weapon, arc + 4, 'f32', 100000))
+        if rate and rate > 0 then
+            add_row(weapon, 'Fire', 'arc_rpm', 'Fire rate (RPM)', 'f32', { part('arc_rpm', TYPES.arc_weapon, arc + 4, 'f32', 100000) },
+                    1, 6000, 1, 10)
+        end
+    end
+    local blasts = {}
     if prow then
         local function proj(id, label, offset, max, small, big)
             add_row(weapon, 'Projectile', id, label, 'f32', { part(id, T_PROJECTILE, prow + offset, 'f32', 100000) }, 0, max, small, big)
@@ -1057,19 +1107,38 @@ local function resolve_gun(weapon, key)
         -- -> explosion row (+16 inner, +20 outer, +24 shockwave radius)
         local impact = read_field(field_at(T_PROJECTILE, prow + 144, 'u32', 100000))
         local expiry = read_field(field_at(T_PROJECTILE, prow + 156, 'u32', 100000))
-        local blasts = {}
         if impact and impact > 0 then blasts[#blasts + 1] = { id = impact, prefix = 'blast', section = 'Explosion' } end
         if expiry and expiry > 0 and expiry ~= impact then
             blasts[#blasts + 1] = { id = expiry, prefix = 'expiry', section = #blasts > 0 and 'Explosion (expiry)' or 'Explosion' }
         end
-        for _, blast in ipairs(blasts) do
-            local xrow = tables[T_EXPLOSION] and tables[T_EXPLOSION].index[blast.id]
-            if xrow then
-                for _, r in ipairs({ { 'inner', 'Inner radius (m)', 16 }, { 'outer', 'Outer radius (m)', 20 },
-                                     { 'shockwave', 'Shockwave radius (m)', 24 } }) do
-                    local id = blast.prefix .. '_' .. r[1]
-                    add_row(weapon, blast.section, id, r[2], 'f32', { part(id, T_EXPLOSION, xrow + r[3], 'f32', 100000) }, 0, 200, 0.1, 1)
+    end
+    -- a melee strike's explosion (Breaching Hammer), with its damage row (explosion +4)
+    local strike = melee and weapon.key == key and KINDS[T_MELEE].explosions[weapon.hash]
+    if strike then blasts[#blasts + 1] = { id = strike, prefix = 'blast', section = 'Explosion', damage = true } end
+    for _, blast in ipairs(blasts) do
+        local xrow = tables[T_EXPLOSION] and tables[T_EXPLOSION].index[blast.id]
+        if xrow then
+            local id = blast.damage and read_field(field_at(T_EXPLOSION, xrow + 4, 'u32', 100000))
+            local qrow = id and id > 0 and tables[T_DAMAGE] and tables[T_DAMAGE].index[id]
+            if qrow then
+                for _, r in ipairs({ { 'damage', 'Explosion damage', 4, 100000, 1, 10 },
+                                     { 'durable', 'Explosion durable damage', 8, 100000, 1, 10 },
+                                     { 'ap_direct', 'Armor pen. (direct)', 12, 10, 1, 1 },
+                                     { 'ap_slight', 'Armor pen. (slight angle)', 16, 10, 1, 1 },
+                                     { 'ap_large', 'Armor pen. (large angle)', 20, 10, 1, 1 },
+                                     { 'ap_extreme', 'Armor pen. (extreme angle)', 24, 10, 1, 1 },
+                                     { 'demolition', 'Demolition force', 28, 10000, 1, 10 },
+                                     { 'stagger', 'Stagger force', 32, 10000, 1, 10 },
+                                     { 'push', 'Push force', 36, 10000, 1, 10 } }) do
+                    local rid = blast.prefix .. '_' .. r[1]
+                    add_row(weapon, blast.section, rid, r[2], 'u32', { part(rid, T_DAMAGE, qrow + r[3], 'u32', 1000000) },
+                            0, r[4], r[5], r[6])
                 end
+            end
+            for _, r in ipairs({ { 'inner', 'Inner radius (m)', 16 }, { 'outer', 'Outer radius (m)', 20 },
+                                 { 'shockwave', 'Shockwave radius (m)', 24 } }) do
+                local rid = blast.prefix .. '_' .. r[1]
+                add_row(weapon, blast.section, rid, r[2], 'f32', { part(rid, T_EXPLOSION, xrow + r[3], 'f32', 100000) }, 0, 200, 0.1, 1)
             end
         end
     end
@@ -1215,9 +1284,12 @@ local function build_stratagems()
             for k = 1, blob and count or 0 do keys[#keys + 1] = blob:sub(8 * k - 7, 8 * k) end
         end
         for _, h in ipairs(payloads) do keys[#keys + 1] = hash_key(h) end
+        local drone = KINDS[TYPES.health].drones[id]
+        if drone then name = drone[1] end
         local entry = { name = name, slot = 'Stratagems', hash = id_hex(id), note = FAMILY_NOTE[family] or '',
                         rows = {}, by_id = {},
-                        stratagem = { id = id, family = family, def = def, payloads = keys, nodes = nodes, guns = guns } }
+                        stratagem = { id = id, family = family, def = def, payloads = keys, nodes = nodes, guns = guns,
+                                      drone = drone } }
         list[#list + 1] = entry
     end
     for _, s in ipairs(STRATAGEMS) do
@@ -1234,6 +1306,9 @@ local function build_stratagems()
             named = named + 1
             add(id, name, family, {}, {}, def)
             list[#list].note = family:sub(1, 1):upper() .. family:sub(2) .. ' stratagem (' .. text .. ').'
+            if list[#list].stratagem.drone then
+                list[#list].note = 'Guard Dog backpack: the drone and the gun it carries. ' .. list[#list].note
+            end
         end
     end
     table.sort(list, function(a, b)
@@ -1310,6 +1385,23 @@ local function resolve_stratagem(entry)
                 end
             end
         end
+    end
+    -- a Guard Dog: its drone (health +0, spotting range +0, target search interval +0 / +4), then
+    -- the gun it carries
+    if s.drone then
+        local key = hash_key(s.drone[2])
+        local function unit(kind, id, label, offset, storage, max, small, big)
+            local at = tables[kind] and tables[kind].index[key]
+            if at then
+                add_row(entry, 'Drone', id, label, storage, { part(id, kind, at + offset, storage, 1000000) }, 0, max, small, big)
+            end
+        end
+        unit(TYPES.health, 'drone_health', 'Health', 0, 'u32', 100000, 5, 25)
+        unit(TYPES.sensor, 'drone_sight', 'Spotting range (m)', 0, 'f32', 1000, 1, 5)
+        unit(TYPES.detector, 'drone_search_min', 'Target search interval, min (s)', 0, 'f32', 60, 0.05, 0.25)
+        unit(TYPES.detector, 'drone_search_max', 'Target search interval, max (s)', 4, 'f32', 60, 0.05, 0.25)
+        resolve_gun(entry, hash_key(s.drone[3]))
+        return
     end
     -- the first payload that is a gun of its own (not a weapon listed elsewhere; strikes have
     -- their records above)
@@ -1653,7 +1745,7 @@ local function key_down(vk) return user.GetAsyncKeyState(vk) < 0 end
 local TEXT_KEYS = { 0x20, 0xE2 }
 for vk = 0x30, 0x39 do TEXT_KEYS[#TEXT_KEYS + 1] = vk end
 for vk = 0x41, 0x5A do TEXT_KEYS[#TEXT_KEYS + 1] = vk end
-for vk = 0x60, 0x69 do TEXT_KEYS[#TEXT_KEYS + 1] = vk end
+for vk = 0x60, 0x6F do TEXT_KEYS[#TEXT_KEYS + 1] = vk end
 for vk = 0xBA, 0xC0 do TEXT_KEYS[#TEXT_KEYS + 1] = vk end
 for vk = 0xDB, 0xDF do TEXT_KEYS[#TEXT_KEYS + 1] = vk end
 for _, vk in ipairs(TEXT_KEYS) do VK['T' .. vk] = vk end
@@ -1689,7 +1781,8 @@ local ui = { open = false, tab = 'Primary', page = 1, row = 1, scroll = 1, weapo
              gui = nil, world = nil, signature = nil, regions = {}, version = 0, errors = 0,
              wslot = 1, fslot = nil, fpage = 1, message = nil,   -- chosen weapon preset / full preset, status line
              editing = nil, confirm = nil,    -- a preset name being typed; an overwrite / delete to confirm
-             search = { text = '', active = false } }   -- the list's search (active: being typed)
+             search = { text = '', active = false },    -- the list's search (active: being typed)
+             value = nil }   -- a value being typed: { n = row, weapon, text, fresh (the first key replaces it) }
 local TABS = { 'Primary', 'Secondary', 'Support', 'Stratagems', 'Presets' }
 local LIST_ROWS = 27
 local W, H = 1000, 980       -- panel size in its own units
@@ -1831,11 +1924,11 @@ local function select_weapon(weapon)
     end
 end
 
-local function change(row, delta_sign, big)
+local function change(row, delta_sign, big, exact)
     local weapon = ui.weapon
     local current = row_value(row)
     if not weapon or current == nil then return end
-    local target = current + delta_sign * step_of(row, current, big)
+    local target = exact or current + delta_sign * step_of(row, current, big)
     if row.storage == 'u32' then target = math.floor(target + 0.5)
     else target = math.floor(target * 10000 + 0.5) / 10000 end
     target = math.max(row.min, math.min(row.max, target))
@@ -1855,6 +1948,23 @@ local function change(row, delta_sign, big)
         end
     end
     ui.version = ui.version + 1
+end
+
+-- Ends typing a value: keep = true sets it (out of the stat's range: the nearest end, and says so).
+local function finish_value(keep)
+    local edit = ui.value
+    ui.value = nil
+    local row = edit and keep and edit.weapon == ui.weapon and ui.weapon.rows[edit.n]
+    local typed = row and tonumber((edit.text:gsub(',', '.')))
+    if not typed then return end
+    local rounded = row.storage == 'u32' and math.floor(typed + 0.5) or typed
+    local target = math.max(row.min, math.min(row.max, rounded))
+    change(row, 0, false, target)
+    if target ~= rounded then
+        local text = string.format('%s can be %s to %s: set to %s.', row.label, fmt(row.min, row.storage),
+                                   fmt(row.max, row.storage), fmt(target, row.storage))
+        ui.message = { text = text, till = api.now() + 4 }
+    end
 end
 
 local function reset_row(weapon, row)
@@ -2466,7 +2576,16 @@ local function draw(width, height)
                 if focus then rect(x0 - 6, y - 1, W - x0 - 10, pitch - 1, color(30, 38, 48), 951) end
                 text(row.label, x0, y + bh / 2 - 8, 16, focus and GOLD or WHITE, 236)
                 text(changed and ('was ' .. fmt(default, row.storage)) or '', 690, y + bh / 2 - 7, 14, DIM, 90, true)
-                text(fmt(value, row.storage), 780, y + bh / 2 - 8, 17, changed and GOLD or WHITE, 84, true)
+                local typing = ui.value and ui.value.n == n and ui.value.weapon == weapon
+                if typing or (ui.hover == 'value:' .. n and value ~= nil) then
+                    rect(696, y, 88, bh, typing and color(20, 26, 34) or color(40, 52, 64), 951)
+                    outline(696, y, 88, bh, GOLD)
+                end
+                if typing then
+                    text(ui.value.text .. '_', 780, y + bh / 2 - 8, 17, WHITE, 84, true)
+                else
+                    text(fmt(value, row.storage), 780, y + bh / 2 - 8, 17, changed and GOLD or WHITE, 84, true)
+                end
                 local ok = value ~= nil
                 button('dec_big:' .. n, '--', 790, y, 40, bh, ok)
                 button('dec:' .. n, '-', 834, y, 36, bh, ok)
@@ -2474,6 +2593,7 @@ local function draw(width, height)
                 button('inc_big:' .. n, '++', 914, y, 40, bh, ok)
                 button('reset:' .. n, 'R', 958, y, 26, bh, changed)
                 region('row:' .. n, x0 - 6, y - 1, 430, pitch - 1)
+                region('value:' .. n, 696, y, 88, bh, ok)
                 y = y + pitch
             end
         end
@@ -2489,6 +2609,9 @@ local function draw(width, height)
     if ui.editing then
         text('Type the name: Enter keeps it, Esc cancels. The game sees these keys too, so name presets from a menu.',
              18, H - 56, 14, MUTED, W - 36)
+    elseif ui.value then
+        text('Type the value: Enter sets it, Esc cancels. Values out of range are set to the nearest allowed one.',
+             18, H - 56, 14, MUTED, W - 36)
     elseif ui.search.active and not presets_tab then
         text('Type to search: Enter keeps the results, Esc clears the search. The game sees these keys too.',
              18, H - 56, 14, MUTED, W - 36)
@@ -2496,7 +2619,7 @@ local function draw(width, height)
         text('Up/Down choose, Enter loads, Insert makes a new one, Shift+Insert saves into it, F2 renames, Del deletes.',
              18, H - 56, 14, MUTED, W - 36)
     else
-        text('Up/Down choose a stat, Left/Right change it (hold Shift: bigger steps), PgUp/PgDn change weapon,',
+        text('Up/Down choose a stat, Left/Right change it (Shift: bigger steps), click a value or press Enter to type it,',
              18, H - 56, 14, MUTED, W - 36)
     end
     if ui.message then
@@ -2505,7 +2628,7 @@ local function draw(width, height)
         text('Overwriting and deleting ask twice. Changes apply at once and are saved; ' .. #overrides ..
              ' value(s) changed.', 18, H - 34, 14, MUTED, W - 36)
     else
-        text('Del resets the stat, Ctrl+1-5 loads a weapon preset, Ctrl+Shift+1-5 saves one; ' .. #overrides ..
+        text('PgUp/PgDn change weapon, Del resets, Ctrl+1-5 loads a weapon preset, Ctrl+Shift+1-5 saves one; ' .. #overrides ..
              ' value(s) changed.', 18, H - 34, 14, MUTED, W - 36)
     end
     return regions
@@ -2529,6 +2652,7 @@ local function click(key)
     -- clicking anything else while naming keeps the name typed so far
     if ui.editing and kind ~= 'name' then presets.finish_rename(true) end
     if ui.search.active and kind ~= 'search' then ui.search.active = false end
+    if ui.value and key ~= 'value:' .. ui.value.n then finish_value(true) end
     if kind == 'tab' then ui.tab, ui.page, ui.search = arg, 1, { text = '', active = false }
     elseif kind == 'search' then
         if arg == 'clear' then ui.search, ui.page = { text = '', active = false }, 1
@@ -2562,7 +2686,10 @@ local function click(key)
         elseif kind == 'dec_big' then change(row, -1, true)
         elseif kind == 'inc' then change(row, 1, false)
         elseif kind == 'inc_big' then change(row, 1, true)
-        elseif kind == 'reset' then reset_row(weapon, row) end
+        elseif kind == 'reset' then reset_row(weapon, row)
+        elseif kind == 'value' and not ui.value and row_value(row) ~= nil then
+            ui.value = { n = tonumber(arg), weapon = weapon, text = fmt(row_value(row), row.storage), fresh = true }
+        end
     end
 end
 
@@ -2587,6 +2714,25 @@ local function keyboard(now)
             if pressed('T' .. vk, now) then
                 local c = key_char(vk)
                 if c then presets.type_char(c) end
+            end
+        end
+        return
+    end
+    if ui.value then
+        local edit = ui.value
+        if pressed('Escape', now) then finish_value(false); return end
+        if pressed('Enter', now) then finish_value(true); return end
+        if pressed('Backspace', now) then
+            edit.text = edit.fresh and '' or edit.text:sub(1, -2)
+            edit.fresh = false
+        end
+        for _, vk in ipairs(TEXT_KEYS) do
+            if pressed('T' .. vk, now) then
+                local c = key_char(vk)
+                if c and c:find('^[%d%.,%-]$') then
+                    if edit.fresh then edit.text, edit.fresh = '', false end
+                    if #edit.text < 16 then edit.text = edit.text .. c end
+                end
             end
         end
         return
@@ -2646,6 +2792,10 @@ local function keyboard(now)
                 if key_down(VK.Shift) then presets.save_weapon_preset(weapon, n) else presets.load_weapon_preset(weapon, n) end
             end
         end
+    end
+    if pressed('Enter', now) and weapon.rows[ui.row] and row_value(weapon.rows[ui.row]) ~= nil then
+        ui.value = { n = ui.row, weapon = weapon, text = fmt(row_value(weapon.rows[ui.row]), weapon.rows[ui.row].storage), fresh = true }
+        return
     end
     local moved = false
     if pressed('Down', now) then ui.row = ui.row % #weapon.rows + 1; moved = true end
@@ -2824,7 +2974,8 @@ local function panel_frame(now)
                                      tostring(ui.hover), ui.weapon and ui.weapon.hash or '-', ui.version,
                                      #overrides, ui.wslot, tostring(ui.fslot), ui.fpage,
                                      ui.message and ui.message.text or '', ui.editing and ui.editing.text or '-',
-                                     ui.search.text, tostring(ui.search.active) }, '|')
+                                     ui.search.text, tostring(ui.search.active),
+                                     ui.value and (ui.value.n .. '=' .. ui.value.text) or '-' }, '|')
     if signature ~= ui.signature then
         -- a fresh gui each time: nothing drawn before can linger
         if ui.gui then
@@ -2874,7 +3025,7 @@ local function open_panel(open)
         clear_gui()
         ui.worlds = nil
         held, mouse_was_down, armed = {}, nil, nil
-        ui.editing, ui.confirm, ui.search.active = nil, nil, false
+        ui.editing, ui.confirm, ui.search.active, ui.value = nil, nil, false, nil
     end
 end
 
