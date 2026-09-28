@@ -1,6 +1,6 @@
 -- HD2-Addon: mods/shodan/stat_editor
--- SHODAN Stat Editor v1.1.0 by SHODAN. Requires Bingus Shared Loader (API 1).
-local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '1.1.0', author = 'SHODAN', log = 'SHODANStatEditor.log' }
+-- SHODAN Stat Editor v1.1.1 by SHODAN. Requires Bingus Shared Loader (API 1).
+local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '1.1.1', author = 'SHODAN', log = 'SHODANStatEditor.log' }
 if rawget(_G, MOD.global) then return end
 
 -- Weapons: name, loadout slot, entity hash (from HD2Runtime's capability catalogs), variant note,
@@ -201,7 +201,7 @@ local STRATAGEMS = {
 -- An in-game panel for the weapon stats the game keeps in its settings tables: damage,
 -- durable damage, armour penetration, demolition / stagger / push force, projectiles per
 -- shot, projectile velocity / drag / penetration slowdown, fire rate, magazines / rounds,
--- recoil, spread, sway and ergonomics, for every weapon in WEAPONS. Changes are written to the
+-- recoil, spread, sway, ergonomics, heat and cool-down times, for every weapon in WEAPONS. Changes are written to the
 -- live tables at once and saved to StatEditor/config.txt, which is applied on the next
 -- start as soon as the tables are found (a few seconds after launch, on the title screen).
 --
@@ -773,6 +773,7 @@ local T_WEAPON, T_MAGAZINE, T_ROUNDS = 0x88E4DBB1, 0xFB8D88A3, 0x66081072
 local T_FIRE, T_PROJECTILE, T_DAMAGE = 0x45171B68, 0xBD4042C2, 0xE0A72CF0
 local T_BEAM_WEAPON, T_BEAM = 0xF0721C2C, 0xC5085606
 local T_EXPLOSION, T_ORBITAL, T_STRATAGEM = 0x2AEA2592, 0x936A9C08, 0x30EB6399
+local T_HEAT = 0x4C981CD9
 local KINDS = {
     [T_WEAPON] = { name = 'weapon', stride = 1232, keyed = true },
     [T_MAGAZINE] = { name = 'magazine', stride = 160, keyed = true },
@@ -784,12 +785,13 @@ local KINDS = {
     [T_BEAM] = { name = 'beam', stride = 112 },
     [T_EXPLOSION] = { name = 'explosion', stride = 152, tail = true },
     [T_ORBITAL] = { name = 'orbital beam', stride = 552, keyed = true },
+    [T_HEAT] = { name = 'weapon heat', stride = 592, keyed = true },
     -- one table per stratagem group (orbitals, eagles, backpacks, ...), rows keyed by the id at +4
     [T_STRATAGEM] = { name = 'stratagem', stride = 400, tail = true, id_at = 4, groups = true },
 }
 -- the tables the panel waits for (stratagem groups are taken as they come)
 local KIND_ORDER = { T_WEAPON, T_MAGAZINE, T_ROUNDS, T_FIRE, T_PROJECTILE, T_DAMAGE, T_BEAM_WEAPON, T_BEAM,
-                     T_EXPLOSION, T_ORBITAL }
+                     T_EXPLOSION, T_ORBITAL, T_HEAT }
 local ZERO8 = string.rep('\0', 8)
 
 -- kind -> { payload = size, index = key -> payload offset, entries = n, copies = { block address },
@@ -1043,6 +1045,50 @@ local function resolve_gun(weapon, key)
         rnd('rounds_supply', 'Rounds from supply', 84)
         rnd('rounds_max', 'Max spare rounds', 80)
     end
+    -- heat weapons (lasers, Quasar): +84/+88/+92 heatsinks, +96 overheat threshold, +100 heat it
+    -- recovers to after an overheat, +116/+120 heat per shot / second, +128 cooling per second,
+    -- +140 cooling per second while overheated, +144 (byte) overheat needs a new heatsink
+    local heat = record(T_HEAT)
+    if heat then
+        local function hf(offset) return field_at(T_HEAT, heat + offset, 'f32', 1000000) end
+        local reload = read_field(field_at(T_HEAT, heat + 144, 'u32', 4294967295))
+        reload = reload and reload % 256 ~= 0
+        if reload then
+            local function sink(id, label, offset)
+                add_row(weapon, 'Ammo', id, label, 'u32', { part(id, T_HEAT, heat + offset, 'u32', 100000) }, 0, 999, 1, 5)
+            end
+            sink('heatsinks_start', 'Starting heatsinks', 84)
+            sink('heatsinks_supply', 'Heatsinks from supply', 88)
+            sink('heatsinks_max', 'Max spare heatsinks', 92)
+        end
+        local function h(id, label, offset, small, big)
+            add_row(weapon, 'Heat', id, label, 'f32', { part(id, T_HEAT, heat + offset, 'f32', 1000000) }, 0, 100000, small, big)
+        end
+        h('heat_capacity', 'Overheat threshold', 96, 1, 10)
+        for _, g in ipairs({ { 'heat_shot', 'Heat per shot', 116 }, { 'heat_second', 'Heat per second firing', 120 } }) do
+            local v = read_field(hf(g[3]))
+            if v and v > 0 then h(g[1], g[2], g[3], 0.1, 1) end
+        end
+        -- cool-down times: the heat to shed over the cooling rate; setting a time sets the rate
+        local capacity, recover = hf(96), hf(100)
+        local function span(recovered)
+            local c, r = read_field(capacity), recovered and read_field(recover) or 0
+            return c and r and c - r
+        end
+        local function span_default(recovered)
+            local c, r = default_of(capacity), recovered and default_of(recover) or 0
+            return c and r and c - r
+        end
+        local function cool(id, label, offset, recovered)
+            local s = span(recovered)
+            if not s or s <= 0 then return end
+            local row = add_row(weapon, 'Heat', id, label, 'f32', { part(id, T_HEAT, heat + offset, 'f32', 1000000) }, 0.1, 3600, 0.5, 5)
+            row.span = function() return span(recovered) end
+            row.span_default = function() return span_default(recovered) end
+        end
+        cool('heat_cool', 'Cool-down time, full heat (s)', 128, false)
+        if not reload then cool('heat_cool_overheated', 'Cool-down time after overheat (s)', 140, true) end
+    end
     local data = record(T_WEAPON)
     if data then
         local function w(id, offset) return part(id, T_WEAPON, data + offset, 'f32', 100000) end
@@ -1252,7 +1298,14 @@ local function shared_with(weapon, row)
     return names
 end
 
+-- A time row (row.span) holds a rate; it shows and takes span / rate seconds.
+local function as_time(span, rate)
+    if span == nil or rate == nil or rate <= 0 then return nil end
+    return span / rate
+end
+
 local function row_value(row)
+    if row.span then return as_time(row.span(), read_field(row.parts[1].field)) end
     local sum = 0
     for _, p in ipairs(row.parts) do
         local v = read_field(p.field)
@@ -1263,6 +1316,7 @@ local function row_value(row)
 end
 
 local function row_default(row)
+    if row.span then return as_time(row.span_default(), default_of(row.parts[1].field)) end
     local sum = 0
     for _, p in ipairs(row.parts) do
         local v = default_of(p.field)
@@ -1664,7 +1718,8 @@ local function change(row, delta_sign, big)
         local v = read_field(p.field)
         default_of(p.field)
         local new = target
-        if #row.parts > 1 then new = (current > 0) and v * target / current or target end
+        if row.span then new = row.span() / target
+        elseif #row.parts > 1 then new = (current > 0) and v * target / current or target end
         local ok, why = write_field(p.field, new)
         local d = defaults[p.field.key]
         if ok then

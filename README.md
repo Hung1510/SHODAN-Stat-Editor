@@ -21,9 +21,14 @@ saved, and are applied again automatically every time the game starts.
 | Fire | Fire rate (every fire mode the weapon has) |
 | Ammo | Magazine size, starting magazines, magazines from supply, max spare magazines (or rounds, for weapons loaded by the round) |
 | Handling | Recoil (horizontal, vertical), spread (horizontal, vertical), sway, ergonomics |
+| Heat | Overheat threshold, heat per shot / per second, cool-down time (lasers, Quasar Cannon), heatsinks |
 
 Beam weapons (Scythe, Dagger, Trident, Laser Cannon, Meltagun) get their damage from their beam
 and are fully supported.
+
+**Cool-down time** is shown in seconds: how long a full heat bar takes to cool to zero. Setting it
+sets the cooling rate, so raising the overheat threshold also lengthens it. The Quasar Cannon's
+recharge is its "cool-down time after overheat".
 
 **Stratagems**
 
@@ -38,7 +43,7 @@ and are fully supported.
 ## Install
 
 1. Install **Bingus Shared Loader** (v15 or newer).
-2. Download `SHODAN-Stat-Editor-v1.1.0.zip` from the [releases page](../../releases/latest).
+2. Download `SHODAN-Stat-Editor-v1.1.1.zip` from the [releases page](../../releases/latest).
 3. Install the zip with your Helldivers 2 mod manager, like any other mod package.
 
 ## Use
