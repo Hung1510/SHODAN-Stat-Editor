@@ -1,6 +1,6 @@
 -- HD2-Addon: mods/shodan/stat_editor
--- SHODAN Stat Editor v1.4.1 by SHODAN. Requires Bingus Shared Loader (API 1).
-local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '1.4.1', author = 'SHODAN', log = 'SHODANStatEditor.log' }
+-- SHODAN Stat Editor v1.4.2 by SHODAN. Requires Bingus Shared Loader (API 1).
+local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '1.4.2', author = 'SHODAN', log = 'SHODANStatEditor.log' }
 if rawget(_G, MOD.global) then return end
 
 -- Weapons: name, loadout slot, entity hash (from HD2Runtime's capability catalogs), variant note,
@@ -262,10 +262,6 @@ local function bits_to_f32(bits)
     if exp == 255 then return mant == 0 and sign * math.huge or 0 / 0 end
     if exp == 0 then return mant == 0 and sign * 0.0 or sign * mant * 2 ^ -149 end
     return sign * (1 + mant / 8388608) * 2 ^ (exp - 127)
-end
-
-local function near(a, b)
-    return a ~= nil and math.abs(a - b) < 1e-4
 end
 
 local NEEDLE = 'LDLD' .. u32_bytes(1)
@@ -797,10 +793,20 @@ local KINDS = {
     [T_ROUNDS] = { name = 'rounds', stride = 136, keyed = true },
     [T_FIRE] = { name = 'fire mode', stride = 616, keyed = true },
     [T_PROJECTILE] = { name = 'projectile', stride = 272 },
-    [T_DAMAGE] = { name = 'damage', stride = 76 },
+    [T_DAMAGE] = { name = 'damage', stride = 76, rows = {
+        { 'damage', 'Damage', 4, 100000, 1, 10, explosion = 'Explosion damage', strike = { 10, 100 } },
+        { 'durable', 'Durable damage', 8, 100000, 1, 10, explosion = 'Explosion durable damage', strike = { 10, 100 } },
+        { 'ap_direct', 'Armor pen. (direct)', 12, 10, 1, 1 },
+        { 'ap_slight', 'Armor pen. (slight angle)', 16, 10, 1, 1 },
+        { 'ap_large', 'Armor pen. (large angle)', 20, 10, 1, 1 },
+        { 'ap_extreme', 'Armor pen. (extreme angle)', 24, 10, 1, 1 },
+        { 'demolition', 'Demolition force', 28, 10000, 1, 10 },
+        { 'stagger', 'Stagger force', 32, 10000, 1, 10 },
+        { 'push', 'Push force', 36, 10000, 1, 10 } } },
     [T_BEAM_WEAPON] = { name = 'beam weapon', stride = 120, keyed = true },
     [T_BEAM] = { name = 'beam', stride = 112 },
-    [T_EXPLOSION] = { name = 'explosion', stride = 152, tail = true },
+    [T_EXPLOSION] = { name = 'explosion', stride = 152, tail = true, radii = {
+        { 'inner', 'Inner radius (m)', 16 }, { 'outer', 'Outer radius (m)', 20 }, { 'shockwave', 'Shockwave radius (m)', 24 } } },
     [T_ORBITAL] = { name = 'orbital beam', stride = 552, keyed = true },
     [T_HEAT] = { name = 'weapon heat', stride = 592, keyed = true },
     [T_SPRAY] = { name = 'spray weapon', stride = 224, keyed = true },
@@ -1054,18 +1060,9 @@ local function resolve_gun(weapon, key)
     weapon.projectile, weapon.damage_row = prow and projectile or nil, nil
     if drow then
         weapon.damage_row = true
-        local function dmg(id, label, offset, max, small, big)
-            add_row(weapon, 'Damage', id, label, 'u32', { part(id, T_DAMAGE, drow + offset, 'u32', 1000000) }, 0, max, small, big)
+        for _, r in ipairs(KINDS[T_DAMAGE].rows) do
+            add_row(weapon, 'Damage', r[1], r[2], 'u32', { part(r[1], T_DAMAGE, drow + r[3], 'u32', 1000000) }, 0, r[4], r[5], r[6])
         end
-        dmg('damage', 'Damage', 4, 100000, 1, 10)
-        dmg('durable', 'Durable damage', 8, 100000, 1, 10)
-        dmg('ap_direct', 'Armor pen. (direct)', 12, 10, 1, 1)
-        dmg('ap_slight', 'Armor pen. (slight angle)', 16, 10, 1, 1)
-        dmg('ap_large', 'Armor pen. (large angle)', 20, 10, 1, 1)
-        dmg('ap_extreme', 'Armor pen. (extreme angle)', 24, 10, 1, 1)
-        dmg('demolition', 'Demolition force', 28, 10000, 1, 10)
-        dmg('stagger', 'Stagger force', 32, 10000, 1, 10)
-        dmg('push', 'Push force', 36, 10000, 1, 10)
     end
     -- status effects the hit applies that deal damage (fire from flamers and incendiary rounds, gas):
     -- how much each hit applies (this damage row's), then the status's damage row and duration
@@ -1139,22 +1136,13 @@ local function resolve_gun(weapon, key)
             local id = blast.damage and read_field(field_at(T_EXPLOSION, xrow + 4, 'u32', 100000))
             local qrow = id and id > 0 and tables[T_DAMAGE] and tables[T_DAMAGE].index[id]
             if qrow then
-                for _, r in ipairs({ { 'damage', 'Explosion damage', 4, 100000, 1, 10 },
-                                     { 'durable', 'Explosion durable damage', 8, 100000, 1, 10 },
-                                     { 'ap_direct', 'Armor pen. (direct)', 12, 10, 1, 1 },
-                                     { 'ap_slight', 'Armor pen. (slight angle)', 16, 10, 1, 1 },
-                                     { 'ap_large', 'Armor pen. (large angle)', 20, 10, 1, 1 },
-                                     { 'ap_extreme', 'Armor pen. (extreme angle)', 24, 10, 1, 1 },
-                                     { 'demolition', 'Demolition force', 28, 10000, 1, 10 },
-                                     { 'stagger', 'Stagger force', 32, 10000, 1, 10 },
-                                     { 'push', 'Push force', 36, 10000, 1, 10 } }) do
+                for _, r in ipairs(KINDS[T_DAMAGE].rows) do
                     local rid = blast.prefix .. '_' .. r[1]
-                    add_row(weapon, blast.section, rid, r[2], 'u32', { part(rid, T_DAMAGE, qrow + r[3], 'u32', 1000000) },
+                    add_row(weapon, blast.section, rid, r.explosion or r[2], 'u32', { part(rid, T_DAMAGE, qrow + r[3], 'u32', 1000000) },
                             0, r[4], r[5], r[6])
                 end
             end
-            for _, r in ipairs({ { 'inner', 'Inner radius (m)', 16 }, { 'outer', 'Outer radius (m)', 20 },
-                                 { 'shockwave', 'Shockwave radius (m)', 24 } }) do
+            for _, r in ipairs(KINDS[T_EXPLOSION].radii) do
                 local rid = blast.prefix .. '_' .. r[1]
                 add_row(weapon, blast.section, rid, r[2], 'f32', { part(rid, T_EXPLOSION, xrow + r[3], 'f32', 100000) }, 0, 200, 0.1, 1)
             end
@@ -1419,8 +1407,7 @@ local function resolve_stratagem(entry)
         elseif kind == 'X' then
             local row = tables[T_EXPLOSION] and tables[T_EXPLOSION].index[record]
             if row then
-                for _, f in ipairs({ { 'inner', 'Inner radius (m)', 16 }, { 'outer', 'Outer radius (m)', 20 },
-                                     { 'shockwave', 'Shockwave radius (m)', 24 } }) do
+                for _, f in ipairs(KINDS[T_EXPLOSION].radii) do
                     local id = 'x' .. record .. '_' .. f[1]
                     add_row(entry, section, id, f[2], 'f32', { part(id, T_EXPLOSION, row + f[3], 'f32', 10000) }, 0, 500, 0.5, 2)
                 end
@@ -1428,13 +1415,10 @@ local function resolve_stratagem(entry)
         elseif kind == 'D' then
             local row = tables[T_DAMAGE] and tables[T_DAMAGE].index[record]
             if row then
-                for _, f in ipairs({ { 'damage', 'Damage', 4, 100000, 10, 100 }, { 'durable', 'Durable damage', 8, 100000, 10, 100 },
-                                     { 'ap_direct', 'Armor pen. (direct)', 12, 10, 1, 1 }, { 'ap_slight', 'Armor pen. (slight angle)', 16, 10, 1, 1 },
-                                     { 'ap_large', 'Armor pen. (large angle)', 20, 10, 1, 1 }, { 'ap_extreme', 'Armor pen. (extreme angle)', 24, 10, 1, 1 },
-                                     { 'demolition', 'Demolition force', 28, 10000, 1, 10 }, { 'stagger', 'Stagger force', 32, 10000, 1, 10 },
-                                     { 'push', 'Push force', 36, 10000, 1, 10 } }) do
+                for _, f in ipairs(KINDS[T_DAMAGE].rows) do
                     local id = 'd' .. record .. '_' .. f[1]
-                    add_row(entry, section, id, f[2], 'u32', { part(id, T_DAMAGE, row + f[3], 'u32', 1000000) }, 0, f[4], f[5], f[6])
+                    local steps = f.strike or { f[5], f[6] }
+                    add_row(entry, section, id, f[2], 'u32', { part(id, T_DAMAGE, row + f[3], 'u32', 1000000) }, 0, f[4], steps[1], steps[2])
                 end
             end
         end
@@ -1511,27 +1495,19 @@ local function as_time(span, rate)
     return span / rate
 end
 
-local function row_value(row)
-    if row.span then return as_time(row.span(), read_field(row.parts[1].field)) end
+local function row_average(row, get, span)
+    if span then return as_time(span(), get(row.parts[1].field)) end
     local sum = 0
     for _, p in ipairs(row.parts) do
-        local v = read_field(p.field)
+        local v = get(p.field)
         if v == nil then return nil end
         sum = sum + v
     end
     return sum / #row.parts
 end
 
-local function row_default(row)
-    if row.span then return as_time(row.span_default(), default_of(row.parts[1].field)) end
-    local sum = 0
-    for _, p in ipairs(row.parts) do
-        local v = default_of(p.field)
-        if v == nil then return nil end
-        sum = sum + v
-    end
-    return sum / #row.parts
-end
+local function row_value(row) return row_average(row, read_field, row.span) end
+local function row_default(row) return row_average(row, default_of, row.span and row.span_default) end
 
 -- ---------------------------------------------------------------- config
 -- One line per changed value: <weapon hash> <stat> <value>   # weapon name
@@ -1723,6 +1699,19 @@ local function handle_table(address, kind, payload, blob)
     entry.copies[#entry.copies + 1] = address
     parsed_blocks[address] = true
     log(string.format('%s table at %s: %d entries (parsed in %.2f ms)', spec.name, hex(address), info, took))
+    if table_type == T_MAGAZINE and #entry.copies == 1 then
+        local offsets = { capacity = 136, mags_start = 140, mags_supply = 144, mags_max = 148 }
+        local early = 0
+        for _, o in ipairs(overrides) do
+            local offset, record = offsets[o.id], entry.index[hash_key(o.hash)]
+            if offset and record then
+                local f = field_at(T_MAGAZINE, record + offset, 'u32', 100000)
+                default_of(f)
+                if write_field(f, o.value) then early = early + 1 end
+            end
+        end
+        if early > 0 then log('magazine table: ' .. early .. ' saved ammo value(s) applied early') end
+    end
 end
 
 local function after_pass(pass, final)
@@ -1802,7 +1791,11 @@ for vk = 0x41, 0x5A do TEXT_KEYS[#TEXT_KEYS + 1] = vk end
 for vk = 0x60, 0x6F do TEXT_KEYS[#TEXT_KEYS + 1] = vk end
 for vk = 0xBA, 0xC0 do TEXT_KEYS[#TEXT_KEYS + 1] = vk end
 for vk = 0xDB, 0xDF do TEXT_KEYS[#TEXT_KEYS + 1] = vk end
-for _, vk in ipairs(TEXT_KEYS) do VK['T' .. vk] = vk end
+TEXT_KEYS.names = {}
+for n, vk in ipairs(TEXT_KEYS) do
+    VK['T' .. vk] = vk
+    TEXT_KEYS.names[n] = 'T' .. vk
+end
 local key_char
 do
     local key_state, key_text = nil, nil
@@ -1865,9 +1858,14 @@ local function weapons_in(tab)
     return list
 end
 
+local modified_cache = { list = nil, count = -1, set = {} }
 local function modified(weapon)
-    for _, o in ipairs(overrides) do if o.hash == weapon.hash then return true end end
-    return false
+    local cache = modified_cache
+    if cache.list ~= overrides or cache.count ~= #overrides then
+        cache.list, cache.count, cache.set = overrides, #overrides, {}
+        for _, o in ipairs(overrides) do cache.set[o.hash] = true end
+    end
+    return cache.set[weapon.hash] == true
 end
 
 -- Font: the game's UI font (the resource ids HD2 HUD Plus and DiverKit read from game.dll
@@ -2375,10 +2373,11 @@ local function draw(width, height)
     local ink_font, ink_material = font.font, font.material
 
     local function color(r, g, b, a) return Color(a or 255, r, g, b) end
+    local getters = { function(v) return Vector2.x(v) end, function(v) return Vector3.x(v) end,
+                      function(v) return v[1] end }
     local function vx(v)
-        for _, get in ipairs({ function() return Vector2.x(v) end, function() return Vector3.x(v) end,
-                               function() return v[1] end }) do
-            local ok, x = pcall(get)
+        for _, get in ipairs(getters) do
+            local ok, x = pcall(get, v)
             if ok and type(x) == 'number' then return x end
         end
         return nil
@@ -2539,7 +2538,8 @@ local function draw(width, height)
         local selected = weapon == ui.weapon
         if selected then rect(16, y, 318, 25, color(90, 74, 8), 951)
         elseif ui.hover == key then rect(16, y, 318, 25, color(40, 52, 64), 951) end
-        text((modified(weapon) and '* ' or '') .. weapon.name, 24, y + 4, 16, modified(weapon) and GOLD or WHITE,
+        local changed = modified(weapon)
+        text((changed and '* ' or '') .. weapon.name, 24, y + 4, 16, changed and GOLD or WHITE,
              searching and 226 or 302)
         region(key, 16, y, 318, 25)
     end
@@ -2763,8 +2763,8 @@ local function keyboard(now)
         if pressed('Escape', now) then presets.finish_rename(false); return end
         if pressed('Enter', now) then presets.finish_rename(true); return end
         if pressed('Backspace', now) then presets.type_char(false) end
-        for _, vk in ipairs(TEXT_KEYS) do
-            if pressed('T' .. vk, now) then
+        for n, vk in ipairs(TEXT_KEYS) do
+            if pressed(TEXT_KEYS.names[n], now) then
                 local c = key_char(vk)
                 if c then presets.type_char(c) end
             end
@@ -2779,8 +2779,8 @@ local function keyboard(now)
             edit.text = edit.fresh and '' or edit.text:sub(1, -2)
             edit.fresh = false
         end
-        for _, vk in ipairs(TEXT_KEYS) do
-            if pressed('T' .. vk, now) then
+        for n, vk in ipairs(TEXT_KEYS) do
+            if pressed(TEXT_KEYS.names[n], now) then
                 local c = key_char(vk)
                 if c and c:find('^[%d%.,%-]$') then
                     if edit.fresh then edit.text, edit.fresh = '', false end
@@ -2797,8 +2797,8 @@ local function keyboard(now)
         if pressed('Backspace', now) then
             search.text, ui.page = search.text:gsub('[%z\1-\127\194-\244][\128-\191]*$', ''), 1
         end
-        for _, vk in ipairs(TEXT_KEYS) do
-            if pressed('T' .. vk, now) then
+        for n, vk in ipairs(TEXT_KEYS) do
+            if pressed(TEXT_KEYS.names[n], now) then
                 local c = key_char(vk)
                 if c and #search.text + #c <= 40 then search.text, ui.page = search.text .. c, 1 end
             end
