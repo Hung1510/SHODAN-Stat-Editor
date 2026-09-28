@@ -1,6 +1,6 @@
 -- HD2-Addon: mods/shodan/stat_editor
--- SHODAN Stat Editor v1.4.0 by SHODAN. Requires Bingus Shared Loader (API 1).
-local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '1.4.0', author = 'SHODAN', log = 'SHODANStatEditor.log' }
+-- SHODAN Stat Editor v1.4.1 by SHODAN. Requires Bingus Shared Loader (API 1).
+local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '1.4.1', author = 'SHODAN', log = 'SHODANStatEditor.log' }
 if rawget(_G, MOD.global) then return end
 
 -- Weapons: name, loadout slot, entity hash (from HD2Runtime's capability catalogs), variant note,
@@ -115,7 +115,6 @@ local WEAPONS = {
     { 'GR-8 Recoilless Rifle', 'Support', '9F80D67A12A7E40F', '' },
     { 'LAS-98 Laser Cannon', 'Support', 'D54B9505C0F72873', 'The one you carry.' },
     { 'LAS-98 Laser Cannon (crewed mount)', 'Support', '1980D92B619FF5FE', 'A mounted cannon with a seat, dropped by hellpod. Not the one you carry.' },
-    { 'LAS-98 Laser Cannon (laser sentry)', 'Support', '56070F36CFFFA8A8', 'The automatic laser sentry\'s gun. Not the one you carry.' },
     { 'LAS-99 Quasar Cannon', 'Support', '35A61296619CC47E', '' },
     { 'M-1000 Maxigun', 'Support', '43A58CB89CFA197C', '' },
     { 'M-105 Stalwart', 'Support', 'A6A735ACCB4A327F', 'The one you carry.' },
@@ -137,7 +136,19 @@ local WEAPONS = {
     { 'SG-88 Break-Action Shotgun', 'Support', '52071F49263415E4', '' },
     { 'StA-X3 W.A.S.P. Launcher', 'Support', 'CC786F6491FE7E65', '' },
     { 'TX-41 Sterilizer', 'Support', '88F61AFFF48AC8A4', '' },
-    { 'A/ARC-3 Tesla Tower', 'Stratagems', '74599E56F72F9D7E', 'The Tesla Tower sentry\'s arc. Its cooldown is not editable here.' },
+    { 'A/AC-8 Autocannon Sentry', 'Stratagems', '54D86057F5DACFB9', 'Sentry: its cooldown, its body, then its weapon.' },
+    { 'A/ARC-3 Tesla Tower', 'Stratagems', '74599E56F72F9D7E', 'Sentry: its cooldown, its body, then its weapon.' },
+    { 'A/FLAM-40 Flame Sentry', 'Stratagems', '820CC3BAFE962858', 'Sentry: its cooldown, its body, then its weapon.' },
+    { 'A/G-16 Gatling Sentry', 'Stratagems', 'EF85D6CF58E31D70', 'Sentry: its cooldown, its body, then its weapon.' },
+    { 'A/GM-17 Gas Mortar Sentry', 'Stratagems', '299C0D3DFD2F0994', 'Sentry: its cooldown, its body, then its weapon.' },
+    { 'A/LAS-98 Laser Sentry', 'Stratagems', '56070F36CFFFA8A8', 'Sentry: its cooldown, its body, then its weapon.' },
+    { 'A/M-12 Mortar Sentry', 'Stratagems', '51A0812E3BCE2D74', 'Sentry: its cooldown, its body, then its weapon.' },
+    { 'A/M-23 EMS Mortar Sentry', 'Stratagems', 'B2053A1838092F8B', 'Sentry: its cooldown, its body, then its weapon.' },
+    { 'A/MG-43 Machine Gun Sentry', 'Stratagems', '37CDE43876BA26BB', 'Sentry: its cooldown, its body, then its weapon.' },
+    { 'A/MLS-4X Rocket Sentry', 'Stratagems', '37079568DC86E9C6', 'Sentry: its cooldown, its body, then its weapon.' },
+    { 'E/AT-12 Anti-Tank Emplacement', 'Stratagems', '2B11C9E4980EC479', 'Emplacement: its cooldown, its body, then its weapon.' },
+    { 'E/GL-21 Grenadier Battlement', 'Stratagems', '1D5943301A29C940', 'Emplacement: its cooldown, its body, then its weapon.' },
+    { 'E/MG-101 HMG Emplacement', 'Stratagems', '0E977C49DB7604F9', 'Emplacement: its cooldown, its body, then its weapon.' },
 }
 
 -- Stratagems: id, name, family, payload entities, records { kind (P projectile / X explosion /
@@ -218,7 +229,6 @@ local STRATAGEMS = {
 
 local HEADER_BYTES = 24
 local MAX_PAYLOAD = 64 * 1024 * 1024
-local MAX_UNINDEXED_RECORDS = 2
 local MEM_COMMIT, MEM_PRIVATE, MEM_FREE = 0x1000, 0x20000, 0x10000
 local PAGE_READONLY, PAGE_READWRITE = 0x02, 0x04
 
@@ -779,7 +789,8 @@ local T_BEAM_WEAPON, T_BEAM = 0xF0721C2C, 0xC5085606
 local T_EXPLOSION, T_ORBITAL, T_STRATAGEM = 0x2AEA2592, 0x936A9C08, 0x30EB6399
 local T_HEAT, T_SPRAY, T_STATUS, T_MELEE = 0x4C981CD9, 0x8E551126, 0xC63E0B22, 0xBBA9003F
 -- later tables, in one local (the main chunk is at LuaJIT's 200-local limit)
-local TYPES = { arc_weapon = 0xB87BA9ED, arc = 0xAFDF0267, health = 0xB3915DE3, sensor = 0x14729B6A, detector = 0xFF67A367 }
+local TYPES = { arc_weapon = 0xB87BA9ED, arc = 0xAFDF0267, health = 0xB3915DE3, sensor = 0x14729B6A, detector = 0xFF67A367,
+                turret = 0x1EBA7593 }
 local KINDS = {
     [T_WEAPON] = { name = 'weapon', stride = 1232, keyed = true },
     [T_MAGAZINE] = { name = 'magazine', stride = 160, keyed = true },
@@ -807,17 +818,23 @@ local KINDS = {
         [951988742] = { 'AX/LAS-5 "Guard Dog" Rover', '5BEEC97F4C7F4AE9', '2C66C201B2543D2C' },
         [5185868] = { 'AX/TX-13 "Guard Dog" Dog Breath', 'B9BAF571FC8F9959', 'B729A2BA153BCAED' },
         [1125307795] = { 'AX/FLAM-75 "Guard Dog" Hot Dog', '979E9BC6D48D1FC6', '65CD4325BA23F3C6' },
-        [1692135420] = { 'AX/ARC-3 "Guard Dog" K-9', '4B071633584E4594', 'A0532C3616528CBF' } } },
+        [1692135420] = { 'AX/ARC-3 "Guard Dog" K-9', '4B071633584E4594', 'A0532C3616528CBF' } },
+        -- units: sentries / emplacements whose body is not their gun (gun -> body)
+        units = { ['1D5943301A29C940'] = '0C8257D1C0255593' },
+        -- stratagem id -> sentry gun, for sentries whose stratagem drops a body the panel does not list
+        -- (Laser Cannon Sentry, Tesla Tower, Defense Wall Grenade Launcher = the Grenadier Battlement)
+        sentry_ids = { [0x393E6019] = '56070F36CFFFA8A8', [0x8F349F3B] = '74599E56F72F9D7E',
+                       [0x93D3C05C] = '1D5943301A29C940' } },
     [TYPES.sensor] = { name = 'sensor', stride = 44, keyed = true },
     [TYPES.detector] = { name = 'detector', stride = 24, keyed = true },
+    [TYPES.turret] = { name = 'turret', stride = 76, keyed = true },
     -- one table per stratagem group (orbitals, eagles, backpacks, ...), rows keyed by the id at +4
     [T_STRATAGEM] = { name = 'stratagem', stride = 400, tail = true, id_at = 4, groups = true },
 }
 -- the tables the panel waits for (stratagem groups are taken as they come)
 local KIND_ORDER = { T_WEAPON, T_MAGAZINE, T_ROUNDS, T_FIRE, T_PROJECTILE, T_DAMAGE, T_BEAM_WEAPON, T_BEAM,
                      T_EXPLOSION, T_ORBITAL, T_HEAT, T_SPRAY, T_STATUS, T_MELEE, TYPES.arc_weapon, TYPES.arc,
-                     TYPES.health, TYPES.sensor, TYPES.detector }
-local ZERO8 = string.rep('\0', 8)
+                     TYPES.health, TYPES.sensor, TYPES.detector, TYPES.turret }
 
 -- kind -> { payload = size, index = key -> payload offset, entries = n, copies = { block address },
 -- type = table type }; each stratagem group is under its own key (listed in stratagem_groups)
@@ -827,6 +844,7 @@ local tables, parsed_blocks, stratagem_groups = {}, {}, {}
 -- many buckets as entities, then fixed-stride records. Record bytes can look like buckets, so
 -- every candidate bucket count is checked and exactly one must fit.
 local function parse_keyed(blob, stride)
+    local MAX_UNINDEXED_RECORDS, ZERO8 = 2, string.rep('\0', 8)
     local total, count, live, top, offset = #blob, 0, 0, -1, 0
     local fits = {}
     while offset + 16 <= total do
@@ -1240,7 +1258,6 @@ local EAGLE_REARM = 3837064536
 local FAMILY_ORDER = { orbital = 1, eagle = 2, support = 9 }
 local FAMILY_NOTE = { orbital = 'Orbital strike.', eagle = 'Eagle strike. The rearm time is shared by every Eagle.',
                       support = 'Support weapon drop; the weapon itself is under Support.' }
-local stratagem_count = 0
 
 local function id_hex(id) return string.format('%08X%08X', 0, id) end
 
@@ -1265,8 +1282,16 @@ local function build_stratagems()
     for k = #weapons, 1, -1 do
         if weapons[k].stratagem then by_hash[weapons[k].hash] = nil; table.remove(weapons, k) end
     end
-    local guns = {}
-    for _, w in ipairs(weapons) do guns[w.key] = true end
+    local guns, sentries = {}, {}
+    for _, w in ipairs(weapons) do
+        guns[w.key] = true
+        if w.slot == 'Stratagems' then
+            w.sentry_defs = {}
+            local body = KINDS[TYPES.health].units[w.hash]
+            sentries[w.key] = w
+            if body then sentries[hash_key(body)] = w end
+        end
+    end
     local defs = {}
     for _, group in ipairs(stratagem_groups) do
         local entry = tables[group]
@@ -1284,6 +1309,14 @@ local function build_stratagems()
             for k = 1, blob and count or 0 do keys[#keys + 1] = blob:sub(8 * k - 7, 8 * k) end
         end
         for _, h in ipairs(payloads) do keys[#keys + 1] = hash_key(h) end
+        -- a sentry's or emplacement's stratagem: its cooldown goes on the sentry's own entry
+        local sentry = def and by_hash[KINDS[TYPES.health].sentry_ids[id] or '']
+        for _, key in ipairs(keys) do sentry = sentry or sentries[key] end
+        if sentry and sentry.sentry_defs then
+            sentry.sentry_defs[#sentry.sentry_defs + 1] = def
+            log('stratagem ' .. id_hex(id) .. ': cooldown on ' .. sentry.name)
+            return nil
+        end
         local drone = KINDS[TYPES.health].drones[id]
         if drone then name = drone[1] end
         local entry = { name = name, slot = 'Stratagems', hash = id_hex(id), note = FAMILY_NOTE[family] or '',
@@ -1291,6 +1324,7 @@ local function build_stratagems()
                         stratagem = { id = id, family = family, def = def, payloads = keys, nodes = nodes, guns = guns,
                                       drone = drone } }
         list[#list + 1] = entry
+        return entry
     end
     for _, s in ipairs(STRATAGEMS) do
         known[s[1]] = true
@@ -1304,10 +1338,12 @@ local function build_stratagems()
         if text then
             local family, name = pretty(text)
             named = named + 1
-            add(id, name, family, {}, {}, def)
-            list[#list].note = family:sub(1, 1):upper() .. family:sub(2) .. ' stratagem (' .. text .. ').'
-            if list[#list].stratagem.drone then
-                list[#list].note = 'Guard Dog backpack: the drone and the gun it carries. ' .. list[#list].note
+            local entry = add(id, name, family, {}, {}, def)
+            if entry then
+                entry.note = family:sub(1, 1):upper() .. family:sub(2) .. ' stratagem (' .. text .. ').'
+                if entry.stratagem.drone then
+                    entry.note = 'Guard Dog backpack: the drone and the gun it carries. ' .. entry.note
+                end
             end
         end
     end
@@ -1321,10 +1357,27 @@ local function build_stratagems()
         weapons[#weapons + 1] = entry
         by_hash[entry.hash] = entry
     end
-    stratagem_count = #list
     log(string.format('stratagems: %d group table(s), %d definitions, %d listed (%d from the catalog, %d named in game)',
         #stratagem_groups, total, #list, #STRATAGEMS, named))
     for _, entry in ipairs(list) do entry.stratagem.rearm = defs[EAGLE_REARM] end
+end
+
+-- A unit's own rows (a Guard Dog's drone, a sentry or emplacement): health +0, spotting range +0,
+-- target search interval +0 / +4, turret turn speed +12 horizontal / +8 vertical, where it has them.
+local function unit_rows(entry, key, section, prefix)
+    local function unit(kind, id, label, offset, storage, max, small, big)
+        local at = tables[kind] and tables[kind].index[key]
+        if at then
+            add_row(entry, section, prefix .. id, label, storage, { part(prefix .. id, kind, at + offset, storage, 1000000) },
+                    0, max, small, big)
+        end
+    end
+    unit(TYPES.health, 'health', 'Health', 0, 'u32', 100000, 5, 25)
+    unit(TYPES.sensor, 'sight', 'Spotting range (m)', 0, 'f32', 1000, 1, 5)
+    unit(TYPES.detector, 'search_min', 'Target search interval, min (s)', 0, 'f32', 60, 0.05, 0.25)
+    unit(TYPES.detector, 'search_max', 'Target search interval, max (s)', 4, 'f32', 60, 0.05, 0.25)
+    unit(TYPES.turret, 'turn_h', 'Turn speed, horizontal (deg/s)', 12, 'f32', 3600, 1, 10)
+    unit(TYPES.turret, 'turn_v', 'Turn speed, vertical (deg/s)', 8, 'f32', 3600, 1, 10)
 end
 
 local function resolve_stratagem(entry)
@@ -1389,17 +1442,7 @@ local function resolve_stratagem(entry)
     -- a Guard Dog: its drone (health +0, spotting range +0, target search interval +0 / +4), then
     -- the gun it carries
     if s.drone then
-        local key = hash_key(s.drone[2])
-        local function unit(kind, id, label, offset, storage, max, small, big)
-            local at = tables[kind] and tables[kind].index[key]
-            if at then
-                add_row(entry, 'Drone', id, label, storage, { part(id, kind, at + offset, storage, 1000000) }, 0, max, small, big)
-            end
-        end
-        unit(TYPES.health, 'drone_health', 'Health', 0, 'u32', 100000, 5, 25)
-        unit(TYPES.sensor, 'drone_sight', 'Spotting range (m)', 0, 'f32', 1000, 1, 5)
-        unit(TYPES.detector, 'drone_search_min', 'Target search interval, min (s)', 0, 'f32', 60, 0.05, 0.25)
-        unit(TYPES.detector, 'drone_search_max', 'Target search interval, max (s)', 4, 'f32', 60, 0.05, 0.25)
+        unit_rows(entry, hash_key(s.drone[2]), 'Drone', 'drone_')
         resolve_gun(entry, hash_key(s.drone[3]))
         return
     end
@@ -1416,7 +1459,18 @@ end
 
 local function resolve(weapon)
     weapon.rows, weapon.by_id = {}, {}
-    if weapon.stratagem then resolve_stratagem(weapon) else resolve_gun(weapon, weapon.key) end
+    if weapon.stratagem then resolve_stratagem(weapon); return end
+    -- sentries and emplacements (listed as weapons on the Stratagems tab): their body, then their gun
+    if weapon.slot == 'Stratagems' then
+        local parts = {}
+        for k, def in ipairs(weapon.sentry_defs or {}) do
+            parts[k] = part(k == 1 and 'cooldown' or 'cooldown' .. k, def.kind, def.off + 104, 'f32', 100000)
+        end
+        if parts[1] then add_row(weapon, 'Stratagem', 'cooldown', 'Cooldown (s)', 'f32', parts, 0, 10000, 1, 10) end
+        local body = KINDS[TYPES.health].units[weapon.hash]
+        unit_rows(weapon, body and hash_key(body) or weapon.key, weapon.name:find('^E/') and 'Emplacement' or 'Sentry', 'unit_')
+    end
+    resolve_gun(weapon, weapon.key)
 end
 
 -- Resolves weapons from `next` on until the deadline; true once all are done.
@@ -1786,7 +1840,6 @@ local ui = { open = false, tab = 'Primary', page = 1, row = 1, scroll = 1, weapo
 local TABS = { 'Primary', 'Secondary', 'Support', 'Stratagems', 'Presets' }
 local LIST_ROWS = 27
 local W, H = 1000, 980       -- panel size in its own units
-local SCALE = 0.8             -- panel units -> 1080p units
 
 -- The weapons (or stratagems) of a tab; tab '?search': those of every tab whose name holds every
 -- word of the search (any case).
@@ -1823,7 +1876,7 @@ local font = nil
 local GAME_STAMP, FONT_RVA, ATLAS_RVA, MATERIAL_RVA = 0x6AB3B43F, 0x3772268, 0x3772EE8, 0x37C5478
 
 local function resource_hex(bytes)
-    if not bytes or #bytes ~= 8 or bytes == ZERO8 then return nil end
+    if not bytes or #bytes ~= 8 or bytes == string.rep('\0', 8) then return nil end
     return string.format('%08x%08x', u32(bytes, 4), u32(bytes, 0))
 end
 
@@ -2315,7 +2368,7 @@ end
 -- top left; the gui itself counts pixels from the bottom left.
 local function draw(width, height)
     local Gui, Vector3, Vector2, Color = sr.Gui, sr.Vector3, sr.Vector2, sr.Color
-    local s = height / 1080 * SCALE
+    local s = height / 1080 * 0.8   -- panel units -> 1080p units
     local ox, oy = width - (W + 30) * s, (height - H * s) / 2
     local gui = ui.gui
     local regions = {}

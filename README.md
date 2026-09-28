@@ -49,7 +49,7 @@ recharge is its "cool-down time after overheat".
 | Orbital and Eagle strikes | For every projectile and blast they use: velocity, inner / outer / shockwave radius, and the full damage set above |
 | Orbital Laser | Duration, tracking speed, search radius, damage tick |
 | Guard Dogs (AR-23, Rover, Dog Breath, Hot Dog, K-9) | The drone's health, spotting range and target search interval, and the gun it carries, stat for stat like a weapon |
-| Tesla Tower | Arc damage, range, chain length and split |
+| Sentries and emplacements (all ten sentries, HMG and Anti-Tank Emplacements, Grenadier Battlement) | Cooldown, health, spotting range, target search interval, turret turn speed, and their weapon stat for stat (the Tesla Tower's arc included) |
 
 How far a Guard Dog flies from you is decided by its behaviour in the game code, not by the data
 the panel edits, so it can't be changed. The AR-23 dog's bullet is the Liberator Penetrator's and
@@ -58,7 +58,7 @@ the Hot Dog's flame damage is the Torcher's; the panel notes values that change 
 ## Install
 
 1. Install **Bingus Shared Loader** (v15 or newer).
-2. Download `SHODAN-Stat-Editor-v1.4.0.zip` from the [releases page](../../releases/latest).
+2. Download `SHODAN-Stat-Editor-v1.4.1.zip` from the [releases page](../../releases/latest).
 3. Install the zip with your Helldivers 2 mod manager, like any other mod package.
 
 ## Use
@@ -124,8 +124,8 @@ share the whole setup.
 - **Shared values.** Some weapons fire the same projectile or share its damage values (for
   example the Liberator, Liberator Carbine, StA-52 and Stalwart). The panel names the weapons
   that change along with the one you edit.
-- **Variants.** Some weapons exist more than once in the game's data (a mounted copy, a sentry
-  version, an underbarrel attachment). The list labels each one, and the panel says which copy
+- **Variants.** Some weapons exist more than once in the game's data (a mounted copy, an
+  underbarrel attachment). The list labels each one, and the panel says which copy
   you are editing.
 - **Barrages** can use different shells for different rounds; the section names say which rounds
   a value belongs to. Long lists scroll: Up/Down follow the chosen stat, or use the buttons under
