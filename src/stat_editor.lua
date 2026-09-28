@@ -1335,12 +1335,13 @@ local function resolve_gun(weapon, key)
         proj('drag', 'Drag factor', 40, 100, 0.05, 0.5)
         proj('pen_slowdown', 'Penetration slowdown', 64, 100, 0.05, 0.25)
         -- explosions: the projectile's on impact (+144) and on expiry (+156, when another one)
-        -- -> explosion row (+16 inner, +20 outer, +24 shockwave radius)
+        -- -> explosion row (+4 damage row, +16 inner, +20 outer, +24 shockwave radius)
         local impact = read_field(field_at(T_PROJECTILE, prow + 144, 'u32', 100000))
         local expiry = read_field(field_at(T_PROJECTILE, prow + 156, 'u32', 100000))
-        if impact and impact > 0 then blasts[#blasts + 1] = { id = impact, prefix = 'blast', section = 'Explosion' } end
+        if impact and impact > 0 then blasts[#blasts + 1] = { id = impact, prefix = 'blast', section = 'Explosion', damage = true } end
         if expiry and expiry > 0 and expiry ~= impact then
-            blasts[#blasts + 1] = { id = expiry, prefix = 'expiry', section = #blasts > 0 and 'Explosion (expiry)' or 'Explosion' }
+            blasts[#blasts + 1] = { id = expiry, prefix = 'expiry', section = #blasts > 0 and 'Explosion (expiry)' or 'Explosion',
+                                    damage = true }
         end
     end
     -- a melee strike's explosion (Breaching Hammer), with its damage row (explosion +4)

@@ -17,7 +17,7 @@ saved, and are applied again automatically every time the game starts. Keep setu
 |---|---|
 | Damage | Damage, durable damage, armor penetration (direct, slight, large and extreme angle), demolition force, stagger force, push force (from the bullet, beam, flame, arc or melee strike) |
 | Projectile | Projectiles per shot, velocity, drag factor, penetration slowdown |
-| Explosion | Inner, outer and shockwave radius of the blast (grenade launchers and pistols, EATs, recoilless, Autocannon, Eruptor and every other weapon with explosive rounds); the Breaching Hammer's explosion also has its full damage set |
+| Explosion | The blast's full damage set and its inner, outer and shockwave radius (grenade launchers and pistols, EATs, recoilless, Autocannon, Eruptor, Bolt Pistol, the Breaching Hammer's strike and every other weapon with explosive rounds) |
 | Arc | Range, chain length, chain split (Arc Thrower, Blitzer, K-9 Guard Dog, Tesla Tower) |
 | Burning / Gas | How much fire or gas each hit applies (flamethrowers, Coyote, Hyena, incendiary shotguns, lasers, EAT-700, gas weapons); burn / gas damage, armor penetration and duration |
 | Fire | Fire rate (every fire mode the weapon has) |
