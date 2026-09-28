@@ -1,6 +1,6 @@
 -- HD2-Addon: mods/shodan/stat_editor
--- SHODAN Stat Editor v1.1.1 by SHODAN. Requires Bingus Shared Loader (API 1).
-local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '1.1.1', author = 'SHODAN', log = 'SHODANStatEditor.log' }
+-- SHODAN Stat Editor v1.2.0 by SHODAN. Requires Bingus Shared Loader (API 1).
+local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '1.2.0', author = 'SHODAN', log = 'SHODANStatEditor.log' }
 if rawget(_G, MOD.global) then return end
 
 -- Weapons: name, loadout slot, entity hash (from HD2Runtime's capability catalogs), variant note,
@@ -1402,6 +1402,12 @@ local function set_override(weapon, p, value)
     mark_config_dirty()
 end
 
+-- The value to keep as a change: nil when it is the game's own.
+local function unless_default(value, default)
+    if default ~= nil and math.abs(value - default) < 1e-4 then return nil end
+    return value
+end
+
 local pending = {}      -- config values not applied yet (tables still being written)
 
 -- Applies pending values until the deadline (the rest wait for the next call); true when the
@@ -1552,6 +1558,9 @@ local function build_input()
         'int ScreenToClient(void*,void*);',
         'int GetClientRect(void*,void*);',
         'int16_t GetAsyncKeyState(int key);',
+        'int16_t GetKeyState(int key);',
+        'uint32_t MapVirtualKeyW(uint32_t code, uint32_t type);',
+        'int ToUnicode(uint32_t vk, uint32_t scan, const uint8_t *state, uint16_t *text, int size, uint32_t flags);',
         'int ShowCursor(int show);',
         'int ClipCursor(const void *rect);',
         'int GetClipCursor(void *rect);',
@@ -1571,18 +1580,54 @@ end
 
 local VK = { Up = 0x26, Down = 0x28, Left = 0x25, Right = 0x27, PageUp = 0x21, PageDown = 0x22,
              Delete = 0x2E, Shift = 0x10, Insert = 0x2D, Home = 0x24, End = 0x23, Pause = 0x13,
-             ScrollLock = 0x91 }
+             ScrollLock = 0x91, Ctrl = 0x11, Enter = 0x0D, Backspace = 0x08, Escape = 0x1B }
 for n = 1, 12 do VK['F' .. n] = 0x6F + n end
+for n = 0, 9 do VK['Key' .. n] = 0x30 + n end
 
 local function key_down(vk) return user.GetAsyncKeyState(vk) < 0 end
+
+-- Typing (preset names): the keys that can make a character (space, digits, letters, numpad,
+-- punctuation), turned into text by the player's keyboard layout with Shift, Caps Lock and
+-- AltGr as they are. '#' is left out (it starts a comment in the preset files).
+local TEXT_KEYS = { 0x20, 0xE2 }
+for vk = 0x30, 0x39 do TEXT_KEYS[#TEXT_KEYS + 1] = vk end
+for vk = 0x41, 0x5A do TEXT_KEYS[#TEXT_KEYS + 1] = vk end
+for vk = 0x60, 0x69 do TEXT_KEYS[#TEXT_KEYS + 1] = vk end
+for vk = 0xBA, 0xC0 do TEXT_KEYS[#TEXT_KEYS + 1] = vk end
+for vk = 0xDB, 0xDF do TEXT_KEYS[#TEXT_KEYS + 1] = vk end
+for _, vk in ipairs(TEXT_KEYS) do VK['T' .. vk] = vk end
+local key_state, key_text = nil, nil
+
+local function utf8_char(c)
+    if c < 0x80 then return string.char(c) end
+    if c < 0x800 then return string.char(0xC0 + math.floor(c / 64), 0x80 + c % 64) end
+    return string.char(0xE0 + math.floor(c / 4096), 0x80 + math.floor(c / 64) % 64, 0x80 + c % 64)
+end
+
+local function key_char(vk)
+    if not key_state then key_state, key_text = ffi.new('uint8_t[256]'), ffi.new('uint16_t[4]') end
+    ffi.fill(key_state, 256)
+    for _, k in ipairs({ 0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5 }) do
+        if key_down(k) then key_state[k] = 0x80 end
+    end
+    if user.GetKeyState(0x14) % 2 == 1 then key_state[0x14] = 1 end     -- Caps Lock on (low bit)
+    key_state[vk] = 0x80
+    -- flag 4: leaves the keyboard's own state (dead keys) alone
+    if user.ToUnicode(vk, user.MapVirtualKeyW(vk, 0), key_state, key_text, 4, 4) ~= 1 then return nil end
+    local c = key_text[0]
+    if c < 32 or c == 35 or c == 127 or (c >= 0xD800 and c < 0xE000) then return nil end
+    return utf8_char(c)
+end
 
 -- ---------------------------------------------------------------- panel
 local sr = nil          -- the engine (stingray)
 local ui = { open = false, tab = 'Primary', page = 1, row = 1, scroll = 1, weapon = nil, hover = nil,
-             gui = nil, world = nil, signature = nil, regions = {}, version = 0, errors = 0 }
-local TABS = { 'Primary', 'Secondary', 'Support', 'Stratagems' }
+             gui = nil, world = nil, signature = nil, regions = {}, version = 0, errors = 0,
+             wslot = 1, fslot = nil, fpage = 1, message = nil,   -- chosen weapon preset / full preset, status line
+             editing = nil, confirm = nil }   -- a preset name being typed; an overwrite / delete to confirm
+local TABS = { 'Primary', 'Secondary', 'Support', 'Stratagems', 'Presets' }
 local LIST_ROWS = 27
-local W, H = 1000, 940       -- panel size in its own units
+local W, H = 1000, 980       -- panel size in its own units
 local SCALE = 0.8             -- panel units -> 1080p units
 
 local function weapons_in(tab)
@@ -1723,7 +1768,7 @@ local function change(row, delta_sign, big)
         local ok, why = write_field(p.field, new)
         local d = defaults[p.field.key]
         if ok then
-            set_override(weapon, p, (d ~= nil and math.abs(new - d) < 1e-4) and nil or new)
+            set_override(weapon, p, unless_default(new, d))
         else
             log('write refused: ' .. weapon.name .. ' ' .. p.id .. ': ' .. why)
         end
@@ -1754,6 +1799,325 @@ local function reset_all()
     overrides = {}
     mark_config_dirty()
     ui.version = ui.version + 1
+end
+
+-- ---------------------------------------------------------------- presets
+-- Weapon presets: up to 5 per weapon (or stratagem), each every value of it that differs from
+-- the game's, in StatEditor/weapon_presets.txt (<hash> <preset> <stat> <value>; "<hash>
+-- <preset> -" is a preset saved with no changes). Full presets: up to 50, each a name and the
+-- whole set of changes, in StatEditor/preset_NN.txt ("name <name>", then the config.txt lines,
+-- so they can be shared).
+local presets = { weapon_count = 5, full_count = 50, full = {} }   -- see below
+do
+    local WEAPON_PRESETS, FULL_PRESETS = presets.weapon_count, presets.full_count
+    local HEX16 = string.rep('%x', 16)
+    local weapon_presets = {}   -- weapon hash -> preset -> list of { id, value }
+    local full_presets = presets.full   -- number -> { name, values = list of { hash, id, value } }
+    local NAME_BYTES = 40
+
+    local function say(text)
+        ui.message = { text = text, till = api.now() + 4 }
+        log(text)
+    end
+
+    local function preset_file(name)
+        local dir = data_dir('StatEditor')
+        return dir and dir .. '/' .. name
+    end
+
+    local function full_preset_file(n) return preset_file(string.format('preset_%02d.txt', n)) end
+
+    local function write_lines(path, lines)
+        local ok, handle = pcall(io.open, path, 'wb')
+        if ok and handle then
+            pcall(function() handle:write(table.concat(lines, '\r\n') .. '\r\n'); handle:close() end)
+            return true
+        end
+        log('could not write ' .. tostring(path))
+        return false
+    end
+
+    -- The file's lines without comments, or nil when there is no file.
+    local function read_lines(path)
+        local handle = path and io.open(path, 'rb')
+        if not handle then return nil end
+        local text = handle:read('*a') or ''
+        handle:close()
+        local out = {}
+        for line in text:gmatch('[^\r\n]+') do out[#out + 1] = (line:gsub('#.*$', '')) end
+        return out
+    end
+
+    local function named(hash)
+        local weapon = by_hash[hash]
+        return weapon and ('   # ' .. weapon.name) or ''
+    end
+
+    local function save_weapon_presets()
+        local path = preset_file('weapon_presets.txt')
+        if not path then return end
+        local lines = {
+            '# SHODAN Stat Editor weapon presets (up to 5 per weapon), saved from the in-game panel.',
+            '# Lines: <weapon hash> <preset 1-5> <stat> <value>; "-" marks a preset with no changes.',
+        }
+        local hashes = {}
+        for hash in pairs(weapon_presets) do hashes[#hashes + 1] = hash end
+        table.sort(hashes)
+        for _, hash in ipairs(hashes) do
+            for n = 1, WEAPON_PRESETS do
+                local values = weapon_presets[hash][n]
+                if values and #values == 0 then lines[#lines + 1] = hash .. ' ' .. n .. ' -' .. named(hash) end
+                for _, v in ipairs(values or {}) do
+                    lines[#lines + 1] = hash .. ' ' .. n .. ' ' .. v.id .. ' ' .. number_text(v.value) .. named(hash)
+                end
+            end
+        end
+        write_lines(path, lines)
+    end
+
+    local function save_full_preset(n)
+        local path = full_preset_file(n)
+        if not path then return end
+        if not full_presets[n] then
+            pcall(os.remove, path)
+            -- where files cannot be removed, an emptied file says the preset was cleared
+            if io.open(path, 'rb') then write_lines(path, { 'cleared' }) end
+            return
+        end
+        local lines = {
+            '# SHODAN Stat Editor preset. Load it from the Presets tab of the panel.',
+            '# Lines: name <name>, then <weapon hash> <stat> <value> as in config.txt.',
+            'name ' .. full_presets[n].name,
+        }
+        for _, o in ipairs(full_presets[n].values) do
+            lines[#lines + 1] = o.hash .. ' ' .. o.id .. ' ' .. number_text(o.value) .. named(o.hash)
+        end
+        write_lines(path, lines)
+    end
+
+    local function load_presets()
+        local count = 0
+        for _, line in ipairs(read_lines(preset_file('weapon_presets.txt')) or {}) do
+            local hash, n, rest = line:match('^%s*(' .. HEX16 .. ')%s+(%d+)%s+(.-)%s*$')
+            n = tonumber(n)
+            if hash and n and n >= 1 and n <= WEAPON_PRESETS then
+                hash = hash:upper()
+                weapon_presets[hash] = weapon_presets[hash] or {}
+                local values = weapon_presets[hash][n]
+                if not values then values = {}; weapon_presets[hash][n] = values; count = count + 1 end
+                local id, value = rest:match('^([%w_]+)%s+([%d%.%-]+)$')
+                if id and tonumber(value) then values[#values + 1] = { id = id, value = tonumber(value) } end
+            end
+        end
+        local full = 0
+        for n = 1, FULL_PRESETS do
+            local lines = read_lines(full_preset_file(n))
+            local preset = lines and { name = 'Preset ' .. n, values = {} }
+            for _, line in ipairs(lines or {}) do
+                if line:match('^%s*cleared') then preset = nil; break end
+                local name = line:match('^%s*name%s+(.-)%s*$')
+                if name and name ~= '' then preset.name = name:sub(1, NAME_BYTES) end
+                local hash, id, value = line:match('^%s*(' .. HEX16 .. ')%s+([%w_]+)%s+([%d%.%-]+)')
+                if hash and tonumber(value) then
+                    preset.values[#preset.values + 1] = { hash = hash:upper(), id = id, value = tonumber(value) }
+                end
+            end
+            full_presets[n] = preset
+            if preset then full = full + 1 end
+        end
+        log('presets: ' .. count .. ' weapon preset(s), ' .. full .. ' full preset(s)')
+    end
+
+    -- Every value of the weapon that differs from the game's, part by part.
+    local function weapon_changes(weapon)
+        local out = {}
+        for _, row in ipairs(weapon.rows) do
+            for _, p in ipairs(row.parts) do
+                local v, d = read_field(p.field), default_of(p.field)
+                if v and d and math.abs(v - d) > 1e-4 then out[#out + 1] = { id = p.id, value = v } end
+            end
+        end
+        return out
+    end
+
+    local function weapon_preset(weapon, n)
+        return weapon and weapon_presets[weapon.hash] and weapon_presets[weapon.hash][n]
+    end
+
+    local function save_weapon_preset(weapon, n)
+        local values = weapon_changes(weapon)
+        weapon_presets[weapon.hash] = weapon_presets[weapon.hash] or {}
+        weapon_presets[weapon.hash][n] = values
+        save_weapon_presets()
+        say('Saved ' .. weapon.name .. ' preset ' .. n .. ' (' .. #values .. ' changed value(s))')
+        ui.version = ui.version + 1
+    end
+
+    -- The weapon takes the preset's values; everything the preset does not name goes back to the game's.
+    local function load_weapon_preset(weapon, n)
+        local values = weapon_preset(weapon, n)
+        if not values then say(weapon.name .. ' preset ' .. n .. ' is empty'); return end
+        local want = {}
+        for _, v in ipairs(values) do want[v.id] = v.value end
+        local refused = 0
+        for _, row in ipairs(weapon.rows) do
+            for _, p in ipairs(row.parts) do
+                local d = default_of(p.field)
+                local target = want[p.id]
+                if target == nil then target = d end
+                want[p.id] = nil
+                local current = read_field(p.field)
+                if target ~= nil and current ~= nil and math.abs(current - target) > 1e-6 then
+                    local ok, why = write_field(p.field, target)
+                    if not ok then refused = refused + 1; log('preset refused: ' .. weapon.name .. ' ' .. p.id .. ': ' .. why) end
+                end
+                if target ~= nil then set_override(weapon, p, unless_default(target, d)) end
+            end
+        end
+        for id in pairs(want) do refused = refused + 1; log('preset: ' .. weapon.name .. ' has no stat ' .. id) end
+        say('Loaded ' .. weapon.name .. ' preset ' .. n .. (refused > 0 and (' (' .. refused .. ' value(s) not applied)') or ''))
+        ui.version = ui.version + 1
+    end
+
+    local function clear_weapon_preset(weapon, n)
+        if not weapon_preset(weapon, n) then return end
+        weapon_presets[weapon.hash][n] = nil
+        if next(weapon_presets[weapon.hash]) == nil then weapon_presets[weapon.hash] = nil end
+        save_weapon_presets()
+        say('Cleared ' .. weapon.name .. ' preset ' .. n)
+        ui.version = ui.version + 1
+    end
+
+    local function current_values()
+        local values = {}
+        for _, o in ipairs(overrides) do values[#values + 1] = { hash = o.hash, id = o.id, value = o.value } end
+        return values
+    end
+
+    -- Preset numbers in use, in order.
+    local function full_order()
+        local order = {}
+        for n = 1, FULL_PRESETS do if full_presets[n] then order[#order + 1] = n end end
+        return order
+    end
+
+    -- The chosen preset (the first one when the chosen one is gone), or nil when there are none.
+    local function chosen()
+        if not full_presets[ui.fslot or 0] then ui.fslot = full_order()[1] end
+        return ui.fslot
+    end
+
+    local function show(n)
+        ui.fslot = n
+        for k, m in ipairs(full_order()) do
+            if m == n then ui.fpage = math.floor((k - 1) / LIST_ROWS) + 1 end
+        end
+    end
+
+    local function start_rename(n)
+        if full_presets[n] then ui.editing = { n = n, text = full_presets[n].name, fresh = true } end
+        ui.version = ui.version + 1
+    end
+
+    -- Enter / OK keeps the typed name, Esc / Cancel drops it.
+    local function finish_rename(keep)
+        local e = ui.editing
+        ui.editing = nil
+        ui.version = ui.version + 1
+        if not (e and keep and full_presets[e.n]) then return end
+        local name = e.text:gsub('[%c#]', ''):gsub('^%s+', ''):gsub('%s+$', '')
+        if name == '' then say('Empty name: kept "' .. full_presets[e.n].name .. '"'); return end
+        full_presets[e.n].name = name
+        save_full_preset(e.n)
+        say('Named it "' .. name .. '"')
+    end
+
+    -- One typed character (UTF-8), or false for Backspace.
+    local function type_char(c)
+        local e = ui.editing
+        if not e then return end
+        if c == false then
+            e.text = e.fresh and '' or e.text:gsub('[%z\1-\127\194-\244][\128-\191]*$', '')
+        else
+            if e.fresh then e.text = '' end
+            if #e.text + #c <= NAME_BYTES then e.text = e.text .. c end
+        end
+        e.fresh = false
+        ui.version = ui.version + 1
+    end
+
+    -- A new preset holding the current changes; its name is typed next.
+    local function new_full_preset()
+        local n = nil
+        for k = 1, FULL_PRESETS do if not full_presets[k] then n = k; break end end
+        if not n then say('All ' .. FULL_PRESETS .. ' presets are in use: delete one first'); return end
+        full_presets[n] = { name = 'Preset ' .. n, values = current_values() }
+        save_full_preset(n)
+        show(n)
+        start_rename(n)
+        say('Saved ' .. #full_presets[n].values .. ' changed value(s) as a new preset. Type its name, Enter keeps it.')
+    end
+
+    local function save_full_preset_now(n)
+        if not full_presets[n] then return end
+        full_presets[n].values = current_values()
+        save_full_preset(n)
+        say('Saved ' .. #full_presets[n].values .. ' changed value(s) into "' .. full_presets[n].name .. '"')
+        ui.version = ui.version + 1
+    end
+
+    -- Every current change is undone, then the preset's values are applied.
+    local function load_full_preset(n)
+        local preset = full_presets[n]
+        if not preset then return end
+        reset_all()
+        local refused = 0
+        for _, o in ipairs(preset.values) do
+            local weapon = by_hash[o.hash]
+            local p = weapon and weapon.by_id[o.id]
+            local ok, why = false, weapon and ('no stat ' .. o.id) or ('unknown weapon ' .. o.hash)
+            if p then
+                local d = default_of(p.field)
+                ok, why = write_field(p.field, o.value)
+                if ok then set_override(weapon, p, unless_default(o.value, d)) end
+            end
+            if not ok then refused = refused + 1; log('preset "' .. preset.name .. '": ' .. (weapon and weapon.name or o.hash) .. ' ' .. o.id .. ': ' .. tostring(why)) end
+        end
+        say('Loaded "' .. preset.name .. '"' .. (refused > 0 and (' (' .. refused .. ' value(s) not applied)') or ''))
+        ui.version = ui.version + 1
+    end
+
+    local function delete_full_preset(n)
+        local preset = full_presets[n]
+        if not preset then return end
+        full_presets[n] = nil
+        save_full_preset(n)
+        if ui.editing and ui.editing.n == n then ui.editing = nil end
+        say('Deleted "' .. preset.name .. '"')
+        ui.version = ui.version + 1
+    end
+
+    -- Overwriting and deleting take a second click (or key press) within 3 s.
+    local function confirm(kind, n)
+        local c = ui.confirm
+        if c and c.kind == kind and c.n == n and api.now() < c.till then
+            ui.confirm = nil
+            if kind == 'save' then save_full_preset_now(n) else delete_full_preset(n) end
+            return
+        end
+        if not full_presets[n] then return end
+        ui.confirm = { kind = kind, n = n, till = api.now() + 3 }
+        say((kind == 'save' and 'Again to overwrite "' or 'Again to delete "') .. full_presets[n].name .. '"')
+        ui.version = ui.version + 1
+    end
+    presets.load_presets = load_presets
+    presets.weapon_preset = weapon_preset
+    presets.save_weapon_preset = save_weapon_preset
+    presets.load_weapon_preset = load_weapon_preset
+    presets.clear_weapon_preset = clear_weapon_preset
+    presets.full_order, presets.chosen, presets.show = full_order, chosen, show
+    presets.new_full_preset, presets.load_full_preset, presets.confirm = new_full_preset, load_full_preset, confirm
+    presets.start_rename, presets.finish_rename, presets.type_char = start_rename, finish_rename, type_char
 end
 
 -- Draws the whole panel into a fresh screen gui. Coordinates are 1080p units from the panel's
@@ -1809,12 +2173,12 @@ local function draw(width, height)
         regions[#regions + 1] = { key = key, x = ox + x * s, y = height - oy - (y + h) * s, w = w * s, h = h * s,
                                   enabled = enabled ~= false }
     end
-    local function button(key, label, x, y, w, h, enabled, active)
+    local function button(key, label, x, y, w, h, enabled, active, ink)
         local hovered = ui.hover == key and enabled ~= false
         local fill = active and color(90, 74, 8) or hovered and color(52, 66, 80) or color(28, 34, 42)
         rect(x, y, w, h, fill, 951)
         outline(x, y, w, h, enabled == false and DIM or (active or hovered) and GOLD or color(70, 82, 94))
-        text(label, x + 8, y + (h - 16) / 2, 16, enabled == false and DIM or WHITE, w - 12)
+        text(label, x + 8, y + (h - 16) / 2, 16, enabled == false and DIM or ink or WHITE, w - 12)
         region(key, x, y, w, h, enabled)
     end
 
@@ -1836,13 +2200,89 @@ local function draw(width, height)
     end
 
     for n, tab in ipairs(TABS) do
-        button('tab:' .. tab, tab, 16 + (n - 1) * 148, 52, 140, 32, true, ui.tab == tab)
+        button('tab:' .. tab, tab, 16 + (n - 1) * 118, 52, 112, 32, true, ui.tab == tab)
     end
     button('reset_weapon', 'Reset weapon', W - 16 - 150 - 8 - 130, 52, 150, 32, ui.weapon ~= nil and modified(ui.weapon))
     button('reset_all', 'Reset all', W - 16 - 130, 52, 130, 32, #overrides > 0)
 
+    local presets_tab = ui.tab == 'Presets'
+    if presets_tab then
+        -- full presets: the list holds them by name, the right side the chosen one
+        local order, chosen = presets.full_order(), presets.chosen()
+        local pages = math.max(1, math.ceil(#order / LIST_ROWS))
+        ui.fpage = math.max(1, math.min(ui.fpage, pages))
+        for k = 1, LIST_ROWS do
+            local n = order[(ui.fpage - 1) * LIST_ROWS + k]
+            if not n then break end
+            local y, key, preset = 96 + (k - 1) * 26, 'fslot:' .. n, presets.full[n]
+            if n == chosen then rect(16, y, 318, 25, color(90, 74, 8), 951)
+            elseif ui.hover == key then rect(16, y, 318, 25, color(40, 52, 64), 951) end
+            text(preset.name, 24, y + 4, 16, n == chosen and GOLD or WHITE, 214)
+            text(#preset.values .. ' value(s)', 326, y + 5, 14, MUTED, 86, true)
+            region(key, 16, y, 318, 25)
+        end
+        if #order == 0 then text('No presets yet.', 24, 100, 16, MUTED) end
+        local py = 96 + LIST_ROWS * 26 + 8
+        button('fpage:prev', '<', 16, py, 40, 30, ui.fpage > 1)
+        text('page ' .. ui.fpage .. ' of ' .. pages .. '   ' .. #order .. ' of ' .. presets.full_count, 70, py + 7, 16, MUTED, 214)
+        button('fpage:next', '>', 294, py, 40, 30, ui.fpage < pages)
+        button('fpreset:new', '+ New preset from current changes', 16, py + 40, 318, 30, #order < presets.full_count)
+        rect(343, 96, 2, H - 96 - 70, color(70, 82, 94), 951)
+
+        local x0, preset = 356, chosen and presets.full[chosen]
+        if not preset then
+            text('Presets', x0, 94, 22, GOLD)
+            text('A preset keeps every change you have made as one set, under a name you choose.', x0, 136, 16, WHITE, W - x0 - 20)
+            text('"+ New preset" (or Insert) saves your current changes as one; you name it next.', x0, 162, 16, MUTED, W - x0 - 20)
+        else
+            local e = ui.editing
+            if e and e.n == chosen then
+                rect(x0 - 4, 88, 420, 34, color(20, 26, 34), 951)
+                outline(x0 - 4, 88, 420, 34, GOLD)
+                text(e.text .. '_', x0 + 4, 94, 20, e.fresh and MUTED or WHITE, 404)
+                button('name:ok', 'OK', x0 + 426, 88, 70, 34, true)
+                button('name:cancel', 'Cancel', x0 + 502, 88, 100, 34, true)
+            else
+                text(preset.name, x0, 94, 22, GOLD, W - x0 - 20)
+            end
+            local sure = ui.confirm and ui.confirm.n == chosen and ui.confirm.kind
+            button('fpreset:load', 'Load', x0, 136, 100, 32, true)
+            button('fpreset:save', sure == 'save' and 'Click again to overwrite' or 'Save current changes here',
+                   x0 + 110, 136, 250, 32, true, sure == 'save')
+            button('fpreset:rename', 'Rename', x0 + 370, 136, 110, 32, true)
+            button('fpreset:delete', sure == 'delete' and 'Sure?' or 'Delete', x0 + 490, 136, 110, 32, true, sure == 'delete')
+            text('Now changed: ' .. #overrides .. ' value(s). Loading a preset replaces every current change with it.',
+                 x0, 182, 15, MUTED, W - x0 - 20)
+            -- what it holds: weapon (or stratagem) and how many of its values
+            local y, names, counts = 212, {}, {}
+            for _, o in ipairs(preset.values) do
+                if not counts[o.hash] then counts[o.hash] = 0; names[#names + 1] = o.hash end
+                counts[o.hash] = counts[o.hash] + 1
+            end
+            if #preset.values == 0 then
+                text('No changes: loading it puts every value back to the game\'s.', x0, y, 16, MUTED, W - x0 - 20)
+            else
+                text(#preset.values .. ' value(s) for ' .. #names .. ' weapon(s) / stratagem(s):', x0, y, 16, WHITE)
+            end
+            y = y + 28
+            local room = math.floor((H - 110 - y) / 22)
+            for k, hash in ipairs(names) do
+                if k == room and #names > room then
+                    text('+ ' .. (#names - room + 1) .. ' more', x0, y, 15, MUTED)
+                    break
+                end
+                local weapon = by_hash[hash]
+                text(weapon and weapon.name or ('unknown ' .. hash), x0, y, 15, weapon and WHITE or WARN, 480)
+                text(counts[hash] .. ' value(s)', W - 24, y, 15, MUTED, 120, true)
+                y = y + 22
+            end
+            text('Saved as StatEditor\\preset_' .. string.format('%02d', chosen) .. '.txt (copy it to share the set).',
+                 x0, H - 100, 14, DIM, W - x0 - 20)
+        end
+    end
+
     -- weapon list
-    local list = weapons_in(ui.tab)
+    local list = presets_tab and {} or weapons_in(ui.tab)
     local pages = math.max(1, math.ceil(#list / LIST_ROWS))
     if ui.page > pages then ui.page = pages end
     for k = 1, LIST_ROWS do
@@ -1857,15 +2297,19 @@ local function draw(width, height)
         region(key, 16, y, 318, 25)
     end
     local py = 96 + LIST_ROWS * 26 + 8
-    button('page:prev', '<', 16, py, 40, 30, ui.page > 1)
-    text('page ' .. ui.page .. ' of ' .. pages, 70, py + 7, 16, MUTED)
-    button('page:next', '>', 294, py, 40, 30, ui.page < pages)
-    rect(343, 96, 2, H - 96 - 70, color(70, 82, 94), 951)
+    if not presets_tab then
+        button('page:prev', '<', 16, py, 40, 30, ui.page > 1)
+        text('page ' .. ui.page .. ' of ' .. pages, 70, py + 7, 16, MUTED)
+        button('page:next', '>', 294, py, 40, 30, ui.page < pages)
+        rect(343, 96, 2, H - 96 - 70, color(70, 82, 94), 951)
+    end
 
     -- stats of the selected weapon
     local weapon = ui.weapon
     local x0 = 356
-    if not weapon then
+    if presets_tab then
+        -- drawn above
+    elseif not weapon then
         text('Choose a weapon on the left.', x0, 100, 18, MUTED)
     else
         text(weapon.name, x0, 94, 22, GOLD, W - x0 - 20)
@@ -1880,7 +2324,18 @@ local function draw(width, height)
         for n, row in ipairs(weapon.rows) do
             if n == 1 or row.section ~= weapon.rows[n - 1].section then sections = sections + 1 end
         end
-        local bottom = H - 70
+        -- this weapon's presets, under its stats
+        local sy = H - 70 - 34
+        text('PRESETS', x0, sy + 8, 15, MUTED)
+        for n = 1, presets.weapon_count do
+            local saved = presets.weapon_preset(weapon, n)
+            button('wslot:' .. n, tostring(n), x0 + 76 + (n - 1) * 46, sy, 40, 30, true, n == ui.wslot, saved and GOLD)
+        end
+        local chosen = presets.weapon_preset(weapon, ui.wslot)
+        button('wpreset:save', 'Save', x0 + 316, sy, 90, 30, true)
+        button('wpreset:load', 'Load', x0 + 412, sy, 90, 30, chosen ~= nil)
+        button('wpreset:clear', 'Clear', x0 + 508, sy, 90, 30, chosen ~= nil)
+        local bottom = H - 70 - 40
         local pitch = math.floor((bottom - y - sections * 24) / math.max(1, #weapon.rows))
         local scrolling = pitch < 22
         if scrolling then
@@ -1934,10 +2389,25 @@ local function draw(width, height)
 
     -- footer
     rect(16, H - 64, W - 32, 1, color(70, 82, 94), 951)
-    text('Up/Down choose a stat, Left/Right change it (hold Shift: bigger steps), PgUp/PgDn change weapon,',
-         18, H - 56, 14, MUTED, W - 36)
-    text('Del resets the stat. Changes apply at once and are saved; ' .. #overrides .. ' value(s) changed.',
-         18, H - 34, 14, MUTED, W - 36)
+    if ui.editing then
+        text('Type the name: Enter keeps it, Esc cancels. The game sees these keys too, so name presets from a menu.',
+             18, H - 56, 14, MUTED, W - 36)
+    elseif presets_tab then
+        text('Up/Down choose, Enter loads, Insert makes a new one, Shift+Insert saves into it, F2 renames, Del deletes.',
+             18, H - 56, 14, MUTED, W - 36)
+    else
+        text('Up/Down choose a stat, Left/Right change it (hold Shift: bigger steps), PgUp/PgDn change weapon,',
+             18, H - 56, 14, MUTED, W - 36)
+    end
+    if ui.message then
+        text(ui.message.text, 18, H - 34, 14, GOOD, W - 36)
+    elseif presets_tab then
+        text('Overwriting and deleting ask twice. Changes apply at once and are saved; ' .. #overrides ..
+             ' value(s) changed.', 18, H - 34, 14, MUTED, W - 36)
+    else
+        text('Del resets the stat, Ctrl+1-5 loads a weapon preset, Ctrl+Shift+1-5 saves one; ' .. #overrides ..
+             ' value(s) changed.', 18, H - 34, 14, MUTED, W - 36)
+    end
     return regions
 end
 
@@ -1956,11 +2426,28 @@ local function click(key)
     if not key then return end
     local weapon = ui.weapon
     local kind, arg = key:match('^([%w_]+):?(.*)$')
+    -- clicking anything else while naming keeps the name typed so far
+    if ui.editing and kind ~= 'name' then presets.finish_rename(true) end
     if kind == 'tab' then ui.tab, ui.page = arg, 1
     elseif kind == 'weapon' then select_weapon(by_hash[arg])
     elseif kind == 'page' then ui.page = ui.page + (arg == 'next' and 1 or -1)
     elseif kind == 'reset_all' then reset_all()
     elseif kind == 'reset_weapon' and weapon then reset_weapon(weapon)
+    elseif kind == 'wslot' then ui.wslot = tonumber(arg) or 1
+    elseif kind == 'wpreset' and weapon then
+        if arg == 'save' then presets.save_weapon_preset(weapon, ui.wslot)
+        elseif arg == 'load' then presets.load_weapon_preset(weapon, ui.wslot)
+        elseif arg == 'clear' then presets.clear_weapon_preset(weapon, ui.wslot) end
+    elseif kind == 'fslot' then ui.fslot = tonumber(arg)
+    elseif kind == 'fpage' then ui.fpage = ui.fpage + (arg == 'next' and 1 or -1)
+    elseif kind == 'name' then presets.finish_rename(arg == 'ok')
+    elseif kind == 'fpreset' then
+        local n = presets.chosen()
+        if arg == 'new' then presets.new_full_preset()
+        elseif n and arg == 'load' then presets.load_full_preset(n)
+        elseif n and arg == 'save' then presets.confirm('save', n)
+        elseif n and arg == 'delete' then presets.confirm('delete', n)
+        elseif n and arg == 'rename' then presets.start_rename(n) end
     elseif kind == 'scroll' and weapon then
         local page = math.max(1, (ui.last_visible or ui.scroll) - ui.scroll)
         ui.scroll = math.max(1, math.min(#weapon.rows, ui.scroll + (arg == 'down' and page or -page)))
@@ -1988,6 +2475,18 @@ end
 
 local function keyboard(now)
     local weapon = ui.weapon
+    if ui.editing then
+        if pressed('Escape', now) then presets.finish_rename(false); return end
+        if pressed('Enter', now) then presets.finish_rename(true); return end
+        if pressed('Backspace', now) then presets.type_char(false) end
+        for _, vk in ipairs(TEXT_KEYS) do
+            if pressed('T' .. vk, now) then
+                local c = key_char(vk)
+                if c then presets.type_char(c) end
+            end
+        end
+        return
+    end
     if pressed('PageDown', now) or pressed('PageUp', now) then
         local all = {}
         for _, tab in ipairs(TABS) do for _, w in ipairs(weapons_in(tab)) do all[#all + 1] = w end end
@@ -1999,7 +2498,32 @@ local function keyboard(now)
         select_weapon(all[at])
         return
     end
+    if ui.tab == 'Presets' then
+        local order, n = presets.full_order(), presets.chosen()
+        local at = 0
+        for k, m in ipairs(order) do if m == n then at = k end end
+        if #order > 0 then
+            if pressed('Down', now) then presets.show(order[at % #order + 1]) end
+            if pressed('Up', now) then presets.show(order[(at - 2) % #order + 1]) end
+        end
+        n = presets.chosen()
+        if pressed('Insert', now) then
+            if key_down(VK.Shift) then if n then presets.confirm('save', n) end else presets.new_full_preset() end
+        end
+        if n and pressed('Enter', now) then presets.load_full_preset(n) end
+        if n and pressed('F2', now) then presets.start_rename(n) end
+        if n and pressed('Delete', now) then presets.confirm('delete', n) end
+        return
+    end
     if not weapon or #weapon.rows == 0 then return end
+    if key_down(VK.Ctrl) then
+        for n = 1, presets.weapon_count do
+            if pressed('Key' .. n, now) then
+                ui.wslot = n
+                if key_down(VK.Shift) then presets.save_weapon_preset(weapon, n) else presets.load_weapon_preset(weapon, n) end
+            end
+        end
+    end
     local moved = false
     if pressed('Down', now) then ui.row = ui.row % #weapon.rows + 1; moved = true end
     if pressed('Up', now) then ui.row = (ui.row - 2) % #weapon.rows + 1; moved = true end
@@ -2171,9 +2695,12 @@ local function panel_frame(now)
 
     -- redraw when anything shown changed
     local width, height = sr.Gui.resolution()
+    if ui.message and api.now() >= ui.message.till then ui.message = nil end
+    if ui.confirm and api.now() >= ui.confirm.till then ui.confirm = nil; ui.version = ui.version + 1 end
     local signature = table.concat({ width, height, state.phase, state.tables, ui.tab, ui.page, ui.row, ui.scroll,
                                      tostring(ui.hover), ui.weapon and ui.weapon.hash or '-', ui.version,
-                                     #overrides }, '|')
+                                     #overrides, ui.wslot, tostring(ui.fslot), ui.fpage,
+                                     ui.message and ui.message.text or '', ui.editing and ui.editing.text or '-' }, '|')
     if signature ~= ui.signature then
         -- a fresh gui each time: nothing drawn before can linger
         if ui.gui then
@@ -2223,6 +2750,7 @@ local function open_panel(open)
         clear_gui()
         ui.worlds = nil
         held, mouse_was_down, armed = {}, nil, nil
+        ui.editing, ui.confirm = nil, nil
     end
 end
 
@@ -2287,6 +2815,7 @@ local ok, failure = pcall(function()
     sr = rawget(_G, 'stingray')
     assert(type(sr) == 'table', 'the engine (stingray) is unavailable')
     load_config()
+    presets.load_presets()
 end)
 
 if not ok then

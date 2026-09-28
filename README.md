@@ -4,7 +4,8 @@
 
 An in-game panel for **Helldivers 2** that changes weapon and stratagem stats while you play.
 Press **F8**, pick a weapon or stratagem, and change its numbers. Changes apply at once, are
-saved, and are applied again automatically every time the game starts.
+saved, and are applied again automatically every time the game starts. Keep setups as presets:
+5 per weapon, and up to 50 named ones for everything you have changed.
 
 **[Download the latest release](../../releases/latest)** · Requires **Bingus Shared Loader** (v15 or newer)
 
@@ -43,7 +44,7 @@ recharge is its "cool-down time after overheat".
 ## Install
 
 1. Install **Bingus Shared Loader** (v15 or newer).
-2. Download `SHODAN-Stat-Editor-v1.1.1.zip` from the [releases page](../../releases/latest).
+2. Download `SHODAN-Stat-Editor-v1.2.0.zip` from the [releases page](../../releases/latest).
 3. Install the zip with your Helldivers 2 mod manager, like any other mod package.
 
 ## Use
@@ -57,6 +58,7 @@ cursor; the keyboard works everywhere:
 | Left / Right | Change it (hold Shift for bigger steps) |
 | PgUp / PgDn | Previous / next weapon |
 | Del | Reset the stat to the game's value |
+| Ctrl+1–5 / Ctrl+Shift+1–5 | Load / save a weapon preset |
 
 Every change is saved to
 
@@ -67,6 +69,28 @@ Every change is saved to
 and applied again on every start, a few seconds after launch (on the title screen). The hotkey
 can be changed in that file (for example `hotkey F7`). Delete a line, or the whole file, to go
 back to the game's values.
+
+## Presets
+
+**Weapon presets.** Every weapon and stratagem has 5. Use the PRESETS strip under its stats:
+pick a number, then **Save** (its current values), **Load** or **Clear**. Numbers in gold hold a
+preset. Loading one sets the weapon exactly as saved; anything the preset doesn't name goes back
+to the game's value.
+
+**Full presets.** Up to 50, on the **Presets** tab, each with a name you choose and every change
+you have made.
+
+- **+ New preset** saves your current changes as one, then you type its name (Enter keeps it,
+  Esc cancels).
+- **Load** replaces all current changes with the preset. **Save current changes here**,
+  **Rename** and **Delete** work on the chosen one; overwriting and deleting ask twice.
+- Keyboard on that tab: Up/Down choose, Enter loads, Insert makes a new one, Shift+Insert saves
+  into the chosen one, F2 renames, Del deletes.
+- The game also receives the keys you type, so name presets from a menu (pause menu, ship).
+
+Presets are saved next to config.txt, as `weapon_presets.txt` and `preset_01.txt` …
+`preset_50.txt`. A full preset file can be copied into another player's `StatEditor` folder to
+share the whole setup.
 
 ## Good to know
 
