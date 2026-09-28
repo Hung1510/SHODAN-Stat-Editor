@@ -264,10 +264,6 @@ local function bits_to_f32(bits)
     return sign * (1 + mant / 8388608) * 2 ^ (exp - 127)
 end
 
-local function near(a, b)
-    return a ~= nil and math.abs(a - b) < 1e-4
-end
-
 local NEEDLE = 'LDLD' .. u32_bytes(1)
 
 -- ---------------------------------------------------------------- windows api
@@ -797,7 +793,12 @@ local KINDS = {
     [T_ROUNDS] = { name = 'rounds', stride = 136, keyed = true },
     [T_FIRE] = { name = 'fire mode', stride = 616, keyed = true },
     [T_PROJECTILE] = { name = 'projectile', stride = 272 },
-    [T_DAMAGE] = { name = 'damage', stride = 76 },
+    [T_DAMAGE] = { name = 'damage', stride = 76, rows = {   -- id, label, offset, max, small / big step
+        { 'damage', 'Damage', 4, 100000, 1, 10 }, { 'durable', 'Durable damage', 8, 100000, 1, 10 },
+        { 'ap_direct', 'Armor pen. (direct)', 12, 10, 1, 1 }, { 'ap_slight', 'Armor pen. (slight angle)', 16, 10, 1, 1 },
+        { 'ap_large', 'Armor pen. (large angle)', 20, 10, 1, 1 }, { 'ap_extreme', 'Armor pen. (extreme angle)', 24, 10, 1, 1 },
+        { 'demolition', 'Demolition force', 28, 10000, 1, 10 }, { 'stagger', 'Stagger force', 32, 10000, 1, 10 },
+        { 'push', 'Push force', 36, 10000, 1, 10 } } },
     [T_BEAM_WEAPON] = { name = 'beam weapon', stride = 120, keyed = true },
     [T_BEAM] = { name = 'beam', stride = 112 },
     [T_EXPLOSION] = { name = 'explosion', stride = 152, tail = true },
@@ -998,6 +999,21 @@ local function part(id, kind, offset, storage, limit)
     return { id = id, field = field_at(kind, offset, storage, limit) }
 end
 
+-- Adds a damage row's stats (the first `count`, default all) to `entry`, ids `prefix` .. stat id.
+-- `what` names the damage / durable rows ('Explosion' -> 'Explosion damage'); `strike`: steps of 10 / 100 for those.
+local function damage_rows(entry, section, prefix, drow, what, count, strike)
+    local first
+    for k = 1, count or 9 do
+        local r = KINDS[T_DAMAGE].rows[k]
+        local id, named = prefix .. r[1], k <= 2
+        local row = add_row(entry, section, id, (named and what) and (what .. ' ' .. r[2]:lower()) or r[2], 'u32',
+                            { part(id, T_DAMAGE, drow + r[3], 'u32', 1000000) }, 0, r[4],
+                            (named and strike) and 10 or r[5], (named and strike) and 100 or r[6])
+        first = first or row
+    end
+    return first
+end
+
 -- Adds the rows of the gun whose entity hash is `key` (8 bytes) to `weapon` (a weapon, or a
 -- stratagem whose payload is a gun: sentries, emplacements).
 local function resolve_gun(weapon, key)
@@ -1054,18 +1070,7 @@ local function resolve_gun(weapon, key)
     weapon.projectile, weapon.damage_row = prow and projectile or nil, nil
     if drow then
         weapon.damage_row = true
-        local function dmg(id, label, offset, max, small, big)
-            add_row(weapon, 'Damage', id, label, 'u32', { part(id, T_DAMAGE, drow + offset, 'u32', 1000000) }, 0, max, small, big)
-        end
-        dmg('damage', 'Damage', 4, 100000, 1, 10)
-        dmg('durable', 'Durable damage', 8, 100000, 1, 10)
-        dmg('ap_direct', 'Armor pen. (direct)', 12, 10, 1, 1)
-        dmg('ap_slight', 'Armor pen. (slight angle)', 16, 10, 1, 1)
-        dmg('ap_large', 'Armor pen. (large angle)', 20, 10, 1, 1)
-        dmg('ap_extreme', 'Armor pen. (extreme angle)', 24, 10, 1, 1)
-        dmg('demolition', 'Demolition force', 28, 10000, 1, 10)
-        dmg('stagger', 'Stagger force', 32, 10000, 1, 10)
-        dmg('push', 'Push force', 36, 10000, 1, 10)
+        damage_rows(weapon, 'Damage', '', drow)
     end
     -- status effects the hit applies that deal damage (fire from flamers and incendiary rounds, gas):
     -- how much each hit applies (this damage row's), then the status's damage row and duration
@@ -1081,19 +1086,9 @@ local function resolve_gun(weapon, key)
                 local name, key = KINDS[T_STATUS].names[kind] or ('Status ' .. kind), 'status' .. kind
                 add_row(weapon, 'Damage', key .. '_strength', name .. ' applied per hit', 'f32',
                         { part(key .. '_strength', T_DAMAGE, drow + 48 + i * 8, 'f32', 100000) }, 0, 1000, 0.1, 1)
-                local section = name
-                local function sd(id, label, offset, max, small, big)
-                    return add_row(weapon, section, key .. '_' .. id, label, 'u32',
-                                   { part(key .. '_' .. id, T_DAMAGE, qrow + offset, 'u32', 1000000) }, 0, max, small, big)
-                end
-                local first = sd('damage', name .. ' damage', 4, 100000, 1, 10)
+                local first = damage_rows(weapon, name, key .. '_', qrow, name, 6)   -- no forces: a status has none
                 first.note = 'every ' .. name:lower() .. ' source shares these (other weapons, strikes, hazards, enemies)'
-                sd('durable', name .. ' durable damage', 8, 100000, 1, 10)
-                sd('ap_direct', 'Armor pen. (direct)', 12, 10, 1, 1)
-                sd('ap_slight', 'Armor pen. (slight angle)', 16, 10, 1, 1)
-                sd('ap_large', 'Armor pen. (large angle)', 20, 10, 1, 1)
-                sd('ap_extreme', 'Armor pen. (extreme angle)', 24, 10, 1, 1)
-                add_row(weapon, section, key .. '_duration', name .. ' duration (s)', 'f32',
+                add_row(weapon, name, key .. '_duration', name .. ' duration (s)', 'f32',
                         { part(key .. '_duration', T_STATUS, srow + 40, 'f32', 100000) }, 0, 600, 0.5, 5)
             end
         end
@@ -1139,19 +1134,7 @@ local function resolve_gun(weapon, key)
             local id = blast.damage and read_field(field_at(T_EXPLOSION, xrow + 4, 'u32', 100000))
             local qrow = id and id > 0 and tables[T_DAMAGE] and tables[T_DAMAGE].index[id]
             if qrow then
-                for _, r in ipairs({ { 'damage', 'Explosion damage', 4, 100000, 1, 10 },
-                                     { 'durable', 'Explosion durable damage', 8, 100000, 1, 10 },
-                                     { 'ap_direct', 'Armor pen. (direct)', 12, 10, 1, 1 },
-                                     { 'ap_slight', 'Armor pen. (slight angle)', 16, 10, 1, 1 },
-                                     { 'ap_large', 'Armor pen. (large angle)', 20, 10, 1, 1 },
-                                     { 'ap_extreme', 'Armor pen. (extreme angle)', 24, 10, 1, 1 },
-                                     { 'demolition', 'Demolition force', 28, 10000, 1, 10 },
-                                     { 'stagger', 'Stagger force', 32, 10000, 1, 10 },
-                                     { 'push', 'Push force', 36, 10000, 1, 10 } }) do
-                    local rid = blast.prefix .. '_' .. r[1]
-                    add_row(weapon, blast.section, rid, r[2], 'u32', { part(rid, T_DAMAGE, qrow + r[3], 'u32', 1000000) },
-                            0, r[4], r[5], r[6])
-                end
+                damage_rows(weapon, blast.section, blast.prefix .. '_', qrow, 'Explosion')
             end
             for _, r in ipairs({ { 'inner', 'Inner radius (m)', 16 }, { 'outer', 'Outer radius (m)', 20 },
                                  { 'shockwave', 'Shockwave radius (m)', 24 } }) do
@@ -1428,14 +1411,7 @@ local function resolve_stratagem(entry)
         elseif kind == 'D' then
             local row = tables[T_DAMAGE] and tables[T_DAMAGE].index[record]
             if row then
-                for _, f in ipairs({ { 'damage', 'Damage', 4, 100000, 10, 100 }, { 'durable', 'Durable damage', 8, 100000, 10, 100 },
-                                     { 'ap_direct', 'Armor pen. (direct)', 12, 10, 1, 1 }, { 'ap_slight', 'Armor pen. (slight angle)', 16, 10, 1, 1 },
-                                     { 'ap_large', 'Armor pen. (large angle)', 20, 10, 1, 1 }, { 'ap_extreme', 'Armor pen. (extreme angle)', 24, 10, 1, 1 },
-                                     { 'demolition', 'Demolition force', 28, 10000, 1, 10 }, { 'stagger', 'Stagger force', 32, 10000, 1, 10 },
-                                     { 'push', 'Push force', 36, 10000, 1, 10 } }) do
-                    local id = 'd' .. record .. '_' .. f[1]
-                    add_row(entry, section, id, f[2], 'u32', { part(id, T_DAMAGE, row + f[3], 'u32', 1000000) }, 0, f[4], f[5], f[6])
-                end
+                damage_rows(entry, section, 'd' .. record .. '_', row, nil, 9, true)
             end
         end
     end
@@ -1511,22 +1487,13 @@ local function as_time(span, rate)
     return span / rate
 end
 
-local function row_value(row)
-    if row.span then return as_time(row.span(), read_field(row.parts[1].field)) end
+-- A row's value (the mean of its parts); default = true: the game's own value instead.
+local function row_value(row, default)
+    local get = default and default_of or read_field
+    if row.span then return as_time((default and row.span_default or row.span)(), get(row.parts[1].field)) end
     local sum = 0
     for _, p in ipairs(row.parts) do
-        local v = read_field(p.field)
-        if v == nil then return nil end
-        sum = sum + v
-    end
-    return sum / #row.parts
-end
-
-local function row_default(row)
-    if row.span then return as_time(row.span_default(), default_of(row.parts[1].field)) end
-    local sum = 0
-    for _, p in ipairs(row.parts) do
-        local v = default_of(p.field)
+        local v = get(p.field)
         if v == nil then return nil end
         sum = sum + v
     end
@@ -2539,8 +2506,8 @@ local function draw(width, height)
         local selected = weapon == ui.weapon
         if selected then rect(16, y, 318, 25, color(90, 74, 8), 951)
         elseif ui.hover == key then rect(16, y, 318, 25, color(40, 52, 64), 951) end
-        text((modified(weapon) and '* ' or '') .. weapon.name, 24, y + 4, 16, modified(weapon) and GOLD or WHITE,
-             searching and 226 or 302)
+        local changed = modified(weapon)
+        text((changed and '* ' or '') .. weapon.name, 24, y + 4, 16, changed and GOLD or WHITE, searching and 226 or 302)
         region(key, 16, y, 318, 25)
     end
     local py = 96 + LIST_ROWS * 26 + 8
@@ -2622,7 +2589,7 @@ local function draw(width, height)
                     if note ~= '' then text(note, x0 + 110, y + 4, 14, WARN, W - x0 - 130) end
                     y = y + 24
                 end
-                local value, default = row_value(row), row_default(row)
+                local value, default = row_value(row), row_value(row, true)
                 local changed = value ~= nil and default ~= nil and math.abs(value - default) > 1e-4
                 local focus = n == ui.row
                 local bh = pitch - 3
