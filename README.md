@@ -1,5 +1,3 @@
-![SHODAN Stat Editor](images/header.png)
-
 # SHODAN Stat Editor
 
 An in-game panel for **Helldivers 2** that changes weapon and stratagem stats while you play.
