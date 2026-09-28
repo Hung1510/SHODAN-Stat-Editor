@@ -134,8 +134,8 @@ share the whole setup.
   underbarrel attachment). The list labels each one, and the panel says which copy
   you are editing.
 - **Barrages** can use different shells for different rounds; the section names say which rounds
-  a value belongs to. Long lists scroll: Up/Down follow the chosen stat, or use the buttons under
-  the list.
+  a value belongs to. Long lists scroll: drag the scroll bar at the right edge, Up/Down follow the
+  chosen stat, or use the buttons under the list.
 - **Your values win over attachments.** A weapon's magazine and heat values stay what you set,
   whichever magazine, heatsink or canister is fitted; what you haven't changed (a magazine's
   ergonomics, for example) still comes from the attachment. Changing a weapon's ergonomics, sway,

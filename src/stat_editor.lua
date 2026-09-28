@@ -2818,6 +2818,7 @@ local function draw(width, height)
             pitch, ui.scroll = math.min(26, pitch), 1
         end
         ui.last_visible = #weapon.rows
+        local top = y
         for n, row in ipairs(weapon.rows) do
             if n >= ui.scroll then
                 if y + pitch + (row.section ~= section and 24 or 0) > bottom then
@@ -2863,7 +2864,22 @@ local function draw(width, height)
                 y = y + pitch
             end
         end
+        ui.sbar = nil
         if scrolling then
+            -- scroll bar: a thin track at the panel's right edge, its thumb the part in view (drag it,
+            -- or click the track to page)
+            local len, total = bottom - top, #weapon.rows
+            local shown = math.max(1, ui.last_visible - ui.scroll + 1)
+            local span = math.max(1, total - shown)
+            local th = math.max(24, math.min(len, len * shown / total))
+            local ty = top + (len - th) * math.min(1, (ui.scroll - 1) / span)
+            rect(989, top, 5, len, color(28, 34, 42), 951)
+            local hot = ui.drag or ui.hover == 'sbar:thumb'
+            rect(989, ty, 5, th, hot and GOLD or color(110, 124, 138), 952)
+            region('sbar:track', 986, top, 12, len)
+            region('sbar:thumb', 986, ty, 12, th)
+            ui.sbar = { top = height - oy - top * s, bottom = height - oy - (top + len) * s,
+                        thumb_top = height - oy - ty * s, thumb = th * s, span = span }
             text(string.format('rows %d-%d of %d', ui.scroll, ui.last_visible, #weapon.rows), x0, bottom + 12, 15, MUTED)
             button('scroll:up', 'Up', 790, bottom + 6, 80, 26, ui.scroll > 1)
             button('scroll:down', 'Down', 874, bottom + 6, 80, 26, ui.last_visible < #weapon.rows)
@@ -3079,6 +3095,22 @@ local function keyboard(now)
     if pressed('Delete', now) then reset_row(weapon, row) end
 end
 
+-- The stats' scroll bar (ui.sbar, set while the rows scroll: track and thumb in gui pixels from the
+-- bottom): pressing the thumb grabs it and dragging moves the rows along; pressing the track pages.
+function ui.scroll_press(key, gy)
+    local b = ui.sbar
+    if not b then return end
+    if key == 'sbar:thumb' then ui.drag = { from = gy, scroll = ui.scroll }
+    else click(gy > b.thumb_top and 'scroll:up' or 'scroll:down') end
+end
+
+function ui.scroll_drag(gy)
+    local b, d = ui.sbar, ui.drag
+    local per = b and d and (b.top - b.bottom - b.thumb) / b.span
+    if not per or per <= 0 then return end
+    ui.scroll = math.max(1, math.min(b.span + 1, d.scroll + math.floor((d.from - gy) / per + 0.5)))
+end
+
 local mouse_was_down, armed = nil, nil
 
 -- Hover and clicks (press and release on the same control), in gui pixels from the bottom left.
@@ -3090,11 +3122,17 @@ local function mouse(window)
     local x, y = point[0], point[1]
     if cw <= 0 or ch <= 0 or x < 0 or y < 0 or x >= cw or y >= ch then return end
     local width, height = sr.Gui.resolution()
-    ui.hover = hit(x * width / cw, (ch - y) * height / ch, true)
+    local gy = (ch - y) * height / ch
+    ui.hover = hit(x * width / cw, gy, true)
     local value = sr.Mouse.button(sr.Mouse.button_id('left'))
     local down = value == true or (type(value) == 'number' and value > 0)
     if mouse_was_down ~= nil then
-        if down and not mouse_was_down then armed = ui.hover end
+        if down and not mouse_was_down then
+            armed = ui.hover
+            if armed == 'sbar:thumb' or armed == 'sbar:track' then ui.scroll_press(armed, gy) end
+        end
+        if down and ui.drag then ui.scroll_drag(gy) end
+        if not down then ui.drag = nil end
         if not down and mouse_was_down then
             if armed and armed == ui.hover then click(armed) end
             armed = nil
@@ -3229,7 +3267,7 @@ local function panel_frame(now)
             log('mouse input off for this session: ' .. tostring(why))
         end
     end
-    if not ui.hover then mouse_was_down, armed = nil, nil end
+    if not ui.hover and not ui.drag then mouse_was_down, armed = nil, nil end
     if window then keyboard(now) end
 
     -- redraw when anything shown changed
@@ -3237,7 +3275,7 @@ local function panel_frame(now)
     if ui.message and api.now() >= ui.message.till then ui.message = nil end
     if ui.confirm and api.now() >= ui.confirm.till then ui.confirm = nil; ui.version = ui.version + 1 end
     local signature = table.concat({ width, height, state.phase, state.tables, ui.tab, ui.page, ui.row, ui.scroll,
-                                     tostring(ui.hover), ui.weapon and ui.weapon.hash or '-', ui.version,
+                                     tostring(ui.hover), tostring(ui.drag ~= nil), ui.weapon and ui.weapon.hash or '-', ui.version,
                                      #overrides, ui.wslot, tostring(ui.fslot), ui.fpage,
                                      ui.message and ui.message.text or '', ui.editing and ui.editing.text or '-',
                                      ui.search.text, tostring(ui.search.active),
@@ -3290,7 +3328,7 @@ local function open_panel(open)
         pcall(release_cursor)
         clear_gui()
         ui.worlds = nil
-        held, mouse_was_down, armed = {}, nil, nil
+        held, mouse_was_down, armed, ui.drag = {}, nil, nil, nil
         ui.editing, ui.confirm, ui.search.active, ui.value = nil, nil, false, nil
     end
 end
