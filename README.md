@@ -17,7 +17,7 @@ saved, and are applied again automatically every time the game starts. Keep setu
 |---|---|
 | Damage | Damage, durable damage, armor penetration (direct, slight, large and extreme angle), demolition force, stagger force, push force (from the bullet, beam, flame, arc or melee strike) |
 | Projectile | Projectiles per shot, velocity, drag factor, penetration slowdown |
-| Explosion | The blast's full damage set and its inner, outer and shockwave radius (grenade launchers and pistols, EATs, recoilless, Autocannon, Eruptor, Bolt Pistol, the Breaching Hammer's strike and every other weapon with explosive rounds) |
+| Explosion | Inner, outer and shockwave radius of the blast (grenade launchers and pistols, EATs, recoilless, Autocannon, Eruptor and every other weapon with explosive rounds); the Breaching Hammer's explosion also has its full damage set |
 | Arc | Range, chain length, chain split (Arc Thrower, Blitzer, K-9 Guard Dog, Tesla Tower) |
 | Burning / Gas | How much fire or gas each hit applies (flamethrowers, Coyote, Hyena, incendiary shotguns, lasers, EAT-700, gas weapons); burn / gas damage, armor penetration and duration |
 | Fire | Fire rate (every fire mode the weapon has) |
@@ -37,6 +37,15 @@ enemies' fire included. To make one weapon burn harder, raise its own values.
 **Cool-down time** is shown in seconds: how long a full heat bar takes to cool to zero. Setting it
 sets the cooling rate, so raising the overheat threshold also lengthens it. The Quasar Cannon's
 recharge is its "cool-down time after overheat".
+
+**Throwables**: all 23 grenades, knives, throwable mines and the shield, on the Throwables tab
+
+| Section | Stats |
+|---|---|
+| Throwable | Starting count, max carried, from supply, max throw distance, fuse time (timed ones) |
+| Explosion | The full damage set above, inner / outer / shockwave radius, and the burning or gas it applies (incendiary and gas grenades) |
+| Shrapnel | Pieces, their damage and velocity (G-6 Frag, TM-1 Lure Mine); the G-7 Pineapple's bomblets and their explosion |
+| Arc / Damage | The G-31 Arc's arc (range, chain length, split, damage); the K-2 Throwing Knife's hit |
 
 **Stratagems**
 
@@ -134,8 +143,8 @@ share the whole setup.
   underbarrel attachment). The list labels each one, and the panel says which copy
   you are editing.
 - **Barrages** can use different shells for different rounds; the section names say which rounds
-  a value belongs to. Long lists scroll: drag the scroll bar at the right edge, Up/Down follow the
-  chosen stat, or use the buttons under the list.
+  a value belongs to. Long lists scroll: Up/Down follow the chosen stat, or use the buttons under
+  the list.
 - **Your values win over attachments.** A weapon's magazine and heat values stay what you set,
   whichever magazine, heatsink or canister is fitted; what you haven't changed (a magazine's
   ergonomics, for example) still comes from the attachment. Changing a weapon's ergonomics, sway,

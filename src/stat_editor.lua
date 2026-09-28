@@ -149,6 +149,29 @@ local WEAPONS = {
     { 'E/AT-12 Anti-Tank Emplacement', 'Stratagems', '2B11C9E4980EC479', 'Emplacement: its cooldown, its body, then its weapon.' },
     { 'E/GL-21 Grenadier Battlement', 'Stratagems', '1D5943301A29C940', 'Emplacement: its cooldown, its body, then its weapon.' },
     { 'E/MG-101 HMG Emplacement', 'Stratagems', '0E977C49DB7604F9', 'Emplacement: its cooldown, its body, then its weapon.' },
+    { 'G-10 Incendiary', 'Throwables', '04653AB33F3FFB44', '' },
+    { 'G-109 Urchin', 'Throwables', '3FA94F58F596BC0B', '' },
+    { 'G-12 High Explosive', 'Throwables', '6B11FC757618C57E', '' },
+    { 'G-123 Thermite', 'Throwables', 'C5C05FCB5747C799', '' },
+    { 'G-13 Incendiary Impact', 'Throwables', 'EB725C39FC38B87C', '' },
+    { 'G-142 Pyrotech', 'Throwables', '03F31CAF3A7D8F4E', '' },
+    { 'G-16 Impact', 'Throwables', '7686544F539BB9B7', '' },
+    { 'G-23 Stun', 'Throwables', '0080869506299773', '' },
+    { 'G-3 Smoke', 'Throwables', '5DE8FD02A05B4B0A', '' },
+    { 'G-31 Arc', 'Throwables', 'DB922A7AFC42894B', '' },
+    { 'G-4 Gas', 'Throwables', '0416984F4922757B', '' },
+    { 'G-48 Giga Grenade', 'Throwables', '46333FC9E3D4BD34', '' },
+    { 'G-50 Seeker', 'Throwables', '2D398D1EC35E0838', '' },
+    { 'G-6 Frag', 'Throwables', '4CE9EAB785A79B7B', '' },
+    { 'G-60 Anti-Tank Seeker', 'Throwables', '8E325C933E55BF62', '' },
+    { 'G-7 Pineapple', 'Throwables', '075B19B068FB1045', '' },
+    { 'G-8 Immolation', 'Throwables', '5C14F27759DD3BE0', '' },
+    { 'G-89 Smokescreen', 'Throwables', 'DAB81B0D80B511C7', '' },
+    { 'G/40-K Melta Mine', 'Throwables', 'EE4C107B941AB7F4', '' },
+    { 'G/SH-39 Shield', 'Throwables', 'C91FB921947AD273', '' },
+    { 'K-2 Throwing Knife', 'Throwables', 'F7B35A9C5AE340B6', '' },
+    { 'TED-63 Dynamite', 'Throwables', '14368DC8784220B0', '' },
+    { 'TM-1 Lure Mine', 'Throwables', 'A20683199DFC19E8', '' },
 }
 
 -- Stratagems: id, name, family, payload entities, records { kind (P projectile / X explosion /
@@ -786,7 +809,8 @@ local T_EXPLOSION, T_ORBITAL, T_STRATAGEM = 0x2AEA2592, 0x936A9C08, 0x30EB6399
 local T_HEAT, T_SPRAY, T_STATUS, T_MELEE = 0x4C981CD9, 0x8E551126, 0xC63E0B22, 0xBBA9003F
 -- later tables, in one local (the main chunk is at LuaJIT's 200-local limit)
 local TYPES = { arc_weapon = 0xB87BA9ED, arc = 0xAFDF0267, health = 0xB3915DE3, sensor = 0x14729B6A, detector = 0xFF67A367,
-                turret = 0x1EBA7593, custom = 0xEBA8F3D0, items = 0x1E604234, deltas = 0x683E604F }
+                turret = 0x1EBA7593, custom = 0xEBA8F3D0, items = 0x1E604234, deltas = 0x683E604F,
+                throwable = 0xAF16BCB5, explosive = 0xF5CF9B8C, sticky = 0x9AF175A4 }
 local KINDS = {
     [T_WEAPON] = { name = 'weapon', stride = 1232, keyed = true },
     [T_MAGAZINE] = { name = 'magazine', stride = 160, keyed = true },
@@ -834,13 +858,19 @@ local KINDS = {
     [TYPES.custom] = { name = 'weapon customization', stride = 4872, keyed = true, cache = {} },
     [TYPES.items] = { name = 'attachment items', stride = 88, tail = true, id_at = 8, groups = true, list = {} },
     [TYPES.deltas] = { name = 'attachment deltas', stride = 1 },
+    -- throwables: carry counts and throw distance, their explosive (fuse, explosion), sticky (the knife's
+    -- hit damage row; its records are followed by 4 bytes of padding)
+    [TYPES.throwable] = { name = 'throwable', stride = 360, keyed = true },
+    [TYPES.explosive] = { name = 'explosive', stride = 360, keyed = true },
+    [TYPES.sticky] = { name = 'sticky', stride = 76, keyed = true, slack = 4 },
     -- one table per stratagem group (orbitals, eagles, backpacks, ...), rows keyed by the id at +4
     [T_STRATAGEM] = { name = 'stratagem', stride = 400, tail = true, id_at = 4, groups = true },
 }
 -- the tables the panel waits for (stratagem groups are taken as they come)
 local KIND_ORDER = { T_WEAPON, T_MAGAZINE, T_ROUNDS, T_FIRE, T_PROJECTILE, T_DAMAGE, T_BEAM_WEAPON, T_BEAM,
                      T_EXPLOSION, T_ORBITAL, T_HEAT, T_SPRAY, T_STATUS, T_MELEE, TYPES.arc_weapon, TYPES.arc,
-                     TYPES.health, TYPES.sensor, TYPES.detector, TYPES.turret, TYPES.custom, TYPES.deltas }
+                     TYPES.health, TYPES.sensor, TYPES.detector, TYPES.turret, TYPES.custom, TYPES.deltas,
+                     TYPES.throwable, TYPES.explosive, TYPES.sticky }
 
 -- The deltas table: five arrays (pointer, count) head the payload: resource -> slot (u64, u32),
 -- slot -> components (count, first), component (index, first delta, count), delta (offset in the
@@ -869,8 +899,9 @@ local tables, parsed_blocks, stratagem_groups = {}, {}, {}
 -- Keyed table: bucket array (u64 entity hash, u32 record index, u32 0) holding exactly twice as
 -- many buckets as entities, then fixed-stride records. Record bytes can look like buckets, so
 -- every candidate bucket count is checked and exactly one must fit.
-local function parse_keyed(blob, stride)
+local function parse_keyed(blob, stride, spec)
     local MAX_UNINDEXED_RECORDS, ZERO8 = 2, string.rep('\0', 8)
+    local slack = spec and spec.slack or 0   -- padding after the records
     local total, count, live, top, offset = #blob, 0, 0, -1, 0
     local fits = {}
     while offset + 16 <= total do
@@ -882,7 +913,7 @@ local function parse_keyed(blob, stride)
             if slot > top then top = slot end
         end
         offset = offset + 16
-        local array = total - count * 16
+        local array = total - count * 16 - slack
         if count == 2 * live and array > 0 and array % stride == 0 then
             local records = array / stride
             if records > top and records <= live + MAX_UNINDEXED_RECORDS then fits[#fits + 1] = count end
@@ -1213,6 +1244,28 @@ end
 
 -- Adds the rows of the gun whose entity hash is `key` (8 bytes) to `weapon` (a weapon, or a
 -- stratagem whose payload is a gun: sentries, emplacements).
+-- The status effects damage row `drow` applies that deal damage (fire from flamers, incendiary rounds
+-- and grenades, gas): how much each hit applies (`per`: 'hit', 'blast'), then the status's damage row
+-- and duration (every source of that status shares them). Ids: `prefix` .. 'status<type>_' .. stat.
+local function status_rows(entry, section, prefix, drow, per)
+    for i = 0, 3 do
+        local kind = read_field(field_at(T_DAMAGE, drow + 44 + i * 8, 'u32', 100000))
+        if not kind or kind == 0 then break end
+        local srow = tables[T_STATUS] and tables[T_STATUS].index[kind]
+        local sid = srow and read_field(field_at(T_STATUS, srow + 44, 'u32', 100000))
+        local qrow = sid and sid > 0 and tables[T_DAMAGE] and tables[T_DAMAGE].index[sid]
+        if qrow then
+            local name, key = KINDS[T_STATUS].names[kind] or ('Status ' .. kind), prefix .. 'status' .. kind
+            add_row(entry, section, key .. '_strength', name .. ' applied per ' .. per, 'f32',
+                    { part(key .. '_strength', T_DAMAGE, drow + 48 + i * 8, 'f32', 100000) }, 0, 1000, 0.1, 1)
+            local first = damage_rows(entry, name, key .. '_', qrow, name, 6)   -- no forces: a status has none
+            first.note = 'every ' .. name:lower() .. ' source shares these (other weapons, strikes, hazards, enemies)'
+            add_row(entry, name, key .. '_duration', name .. ' duration (s)', 'f32',
+                    { part(key .. '_duration', T_STATUS, srow + 40, 'f32', 100000) }, 0, 600, 0.5, 5)
+        end
+    end
+end
+
 local function resolve_gun(weapon, key)
     local function record(kind)
         local entry = tables[kind]
@@ -1290,27 +1343,7 @@ local function resolve_gun(weapon, key)
         weapon.damage_row = true
         damage_rows(weapon, 'Damage', '', drow)
     end
-    -- status effects the hit applies that deal damage (fire from flamers and incendiary rounds, gas):
-    -- how much each hit applies (this damage row's), then the status's damage row and duration
-    -- (every source of that status shares them)
-    if drow then
-        for i = 0, 3 do
-            local kind = read_field(field_at(T_DAMAGE, drow + 44 + i * 8, 'u32', 100000))
-            if not kind or kind == 0 then break end
-            local srow = tables[T_STATUS] and tables[T_STATUS].index[kind]
-            local sid = srow and read_field(field_at(T_STATUS, srow + 44, 'u32', 100000))
-            local qrow = sid and sid > 0 and tables[T_DAMAGE] and tables[T_DAMAGE].index[sid]
-            if qrow then
-                local name, key = KINDS[T_STATUS].names[kind] or ('Status ' .. kind), 'status' .. kind
-                add_row(weapon, 'Damage', key .. '_strength', name .. ' applied per hit', 'f32',
-                        { part(key .. '_strength', T_DAMAGE, drow + 48 + i * 8, 'f32', 100000) }, 0, 1000, 0.1, 1)
-                local first = damage_rows(weapon, name, key .. '_', qrow, name, 6)   -- no forces: a status has none
-                first.note = 'every ' .. name:lower() .. ' source shares these (other weapons, strikes, hazards, enemies)'
-                add_row(weapon, name, key .. '_duration', name .. ' duration (s)', 'f32',
-                        { part(key .. '_duration', T_STATUS, srow + 40, 'f32', 100000) }, 0, 600, 0.5, 5)
-            end
-        end
-    end
+    if drow then status_rows(weapon, 'Damage', '', drow, 'hit') end
     if arow then
         add_row(weapon, 'Arc', 'arc_range', 'Range (m)', 'f32', { part('arc_range', TYPES.arc, arow + 8, 'f32', 100000) },
                 0, 1000, 1, 5)
@@ -1659,8 +1692,84 @@ local function resolve_stratagem(entry)
     end
 end
 
+-- Throwables: throwable component (+100 starting, +104 max, +108 from supply, +16 max throw
+-- distance), explosive component (+0 mode: 0 timed, 3 timed then burning; +12 fuse; +36 explosion),
+-- sticky component (+44 damage row: the throwing knife's hit). The explosion: its damage set,
+-- statuses and radii, its arc (+120: G-31), its shrapnel (+80 count, +84 projectile) and the
+-- shrapnel's own explosion (projectile +144: the Pineapple's bomblets).
+local function resolve_throwable(entry)
+    local function record(kind)
+        local t = tables[kind]
+        return t and t.index[entry.key]
+    end
+    local function damage(id)
+        return id and id > 0 and tables[T_DAMAGE] and tables[T_DAMAGE].index[id]
+    end
+    local th = record(TYPES.throwable)
+    if th then
+        for _, r in ipairs({ { 'throw_start', 'Starting count', 100 }, { 'throw_max', 'Max carried', 104 },
+                             { 'throw_supply', 'From supply', 108 } }) do
+            add_row(entry, 'Throwable', r[1], r[2], 'u32', { part(r[1], TYPES.throwable, th + r[3], 'u32', 10000) }, 0, 999, 1, 5)
+        end
+        add_row(entry, 'Throwable', 'throw_distance', 'Max throw distance (m)', 'f32',
+                { part('throw_distance', TYPES.throwable, th + 16, 'f32', 100000) }, 0, 200, 0.5, 5)
+    end
+    local sticky = record(TYPES.sticky)
+    local hit = sticky and damage(read_field(field_at(TYPES.sticky, sticky + 44, 'u32', 100000)))
+    if hit then
+        damage_rows(entry, 'Damage', '', hit)
+        status_rows(entry, 'Damage', '', hit, 'hit')
+    end
+    local ex = record(TYPES.explosive)
+    if not ex then return end
+    local function explosion(id, prefix, section, deep)
+        local xrow = id and id > 0 and tables[T_EXPLOSION] and tables[T_EXPLOSION].index[id]
+        if not xrow then return false end
+        local qrow = damage(read_field(field_at(T_EXPLOSION, xrow + 4, 'u32', 100000)))
+        if qrow then
+            damage_rows(entry, section, prefix, qrow, section == 'Explosion' and 'Explosion' or nil)
+            status_rows(entry, section, prefix, qrow, 'blast')
+        end
+        for _, r in ipairs({ { 'inner', 'Inner radius (m)', 16 }, { 'outer', 'Outer radius (m)', 20 },
+                             { 'shockwave', 'Shockwave radius (m)', 24 } }) do
+            add_row(entry, section, prefix .. r[1], r[2], 'f32', { part(prefix .. r[1], T_EXPLOSION, xrow + r[3], 'f32', 100000) }, 0, 200, 0.1, 1)
+        end
+        if not deep then return true end
+        local arc = tables[TYPES.arc] and tables[TYPES.arc].index[read_field(field_at(T_EXPLOSION, xrow + 120, 'u32', 100000)) or -1]
+        if arc then
+            add_row(entry, 'Arc', 'arc_range', 'Range (m)', 'f32', { part('arc_range', TYPES.arc, arc + 8, 'f32', 100000) }, 0, 1000, 1, 5)
+            add_row(entry, 'Arc', 'arc_chain', 'Chain length', 'u32', { part('arc_chain', TYPES.arc, arc + 28, 'u32', 1000) }, 0, 20, 1, 1)
+            add_row(entry, 'Arc', 'arc_split', 'Chain split', 'u32', { part('arc_split', TYPES.arc, arc + 32, 'u32', 1000) }, 0, 20, 1, 1)
+            local q = damage(read_field(field_at(TYPES.arc, arc + 36, 'u32', 100000)))
+            if q then damage_rows(entry, 'Arc', 'arc_', q, 'Arc') end
+        end
+        local count = read_field(field_at(T_EXPLOSION, xrow + 80, 'u32', 100000))
+        local pid = count and count > 0 and read_field(field_at(T_EXPLOSION, xrow + 84, 'u32', 100000))
+        local prow = pid and pid > 0 and tables[T_PROJECTILE] and tables[T_PROJECTILE].index[pid]
+        if prow then
+            add_row(entry, 'Shrapnel', 'shrapnel_count', 'Shrapnel pieces', 'u32',
+                    { part('shrapnel_count', T_EXPLOSION, xrow + 80, 'u32', 10000) }, 0, 500, 1, 5)
+            local q = damage(read_field(field_at(T_PROJECTILE, prow + 60, 'u32', 100000)))
+            if q then damage_rows(entry, 'Shrapnel', 'shrapnel_', q, 'Shrapnel') end
+            add_row(entry, 'Shrapnel', 'shrapnel_velocity', 'Velocity (m/s)', 'f32',
+                    { part('shrapnel_velocity', T_PROJECTILE, prow + 32, 'f32', 100000) }, 0, 20000, 10, 100)
+            explosion(read_field(field_at(T_PROJECTILE, prow + 144, 'u32', 100000)), 'bomblet_', 'Shrapnel explosion', false)
+        end
+        return true
+    end
+    local id = read_field(field_at(TYPES.explosive, ex + 36, 'u32', 100000))
+    local mode = read_field(field_at(TYPES.explosive, ex, 'u32', 100000))
+    local fuse = read_field(field_at(TYPES.explosive, ex + 12, 'f32', 100000))
+    local has = id and id > 0 and tables[T_EXPLOSION] and tables[T_EXPLOSION].index[id]
+    if has and (mode == 0 or mode == 3) and fuse and fuse > 0 then
+        add_row(entry, 'Throwable', 'fuse', 'Fuse time (s)', 'f32', { part('fuse', TYPES.explosive, ex + 12, 'f32', 100000) }, 0, 60, 0.1, 1)
+    end
+    explosion(id, 'blast_', 'Explosion', true)
+end
+
 local function resolve(weapon)
     weapon.rows, weapon.by_id = {}, {}
+    if weapon.slot == 'Throwables' then resolve_throwable(weapon); return end
     if weapon.stratagem then resolve_stratagem(weapon); return end
     if weapon.attachment then
         for _, m in ipairs(KINDS[TYPES.items].MODS) do
@@ -1699,11 +1808,12 @@ local function resolve_some(progress, deadline)
     end
     if progress.next <= #weapons then return false end
     local usable, strats = 0, 0
-    state.attachments = 0
+    state.attachments, state.throwables = 0, 0
     for _, weapon in ipairs(weapons) do
         if #weapon.rows > 0 then
             if weapon.stratagem then strats = strats + 1
             elseif weapon.attachment then state.attachments = (state.attachments or 0) + 1
+            elseif weapon.slot == 'Throwables' then state.throwables = (state.throwables or 0) + 1
             else usable = usable + 1 end
         end
     end
@@ -1890,8 +2000,8 @@ local function prepare(deadline)
             log('stratagem ' .. w.name .. ' (' .. w.hash .. '): ' .. #w.rows .. ' rows, ' .. #w.stratagem.payloads .. ' payload(s)')
         end
     end
-    set_status('ready', state.weapons .. ' weapons, ' .. (state.stratagems or 0) .. ' stratagems and ' ..
-               (state.attachments or 0) .. ' attachments editable; ' ..
+    set_status('ready', state.weapons .. ' weapons, ' .. (state.throwables or 0) .. ' throwables, ' ..
+               (state.stratagems or 0) .. ' stratagems and ' .. (state.attachments or 0) .. ' attachments editable; ' ..
                state.applied .. ' saved value(s) applied' ..
                (#pending > 0 and (', ' .. #pending .. ' waiting') or '') ..
                (#missing > 0 and ('; tables not found: ' .. table.concat(missing, ', ')) or ''))
@@ -2050,7 +2160,7 @@ local ui = { open = false, tab = 'Primary', page = 1, row = 1, scroll = 1, weapo
              editing = nil, confirm = nil,    -- a preset name being typed; an overwrite / delete to confirm
              search = { text = '', active = false },    -- the list's search (active: being typed)
              value = nil }   -- a value being typed: { n = row, weapon, text, fresh (the first key replaces it) }
-local TABS = { 'Primary', 'Secondary', 'Support', 'Stratagems', 'Attachments', 'Presets' }
+local TABS = { 'Primary', 'Secondary', 'Support', 'Throwables', 'Stratagems', 'Attachments', 'Presets' }
 local LIST_ROWS = 27
 local W, H = 1000, 980       -- panel size in its own units
 
@@ -2657,10 +2767,10 @@ local function draw(width, height)
     end
 
     for n, tab in ipairs(TABS) do
-        button('tab:' .. tab, tab, 16 + (n - 1) * 111, 52, 104, 32, true, ui.tab == tab)
+        button('tab:' .. tab, tab, 16 + (n - 1) * 104, 52, 98, 32, true, ui.tab == tab)
     end
-    button('reset_weapon', 'Reset weapon', W - 16 - 150 - 8 - 130, 52, 150, 32, ui.weapon ~= nil and modified(ui.weapon))
-    button('reset_all', 'Reset all', W - 16 - 130, 52, 130, 32, #overrides > 0)
+    button('reset_weapon', 'Reset weapon', W - 16 - 96 - 8 - 124, 52, 124, 32, ui.weapon ~= nil and modified(ui.weapon))
+    button('reset_all', 'Reset all', W - 16 - 96, 52, 96, 32, #overrides > 0)
 
     local presets_tab = ui.tab == 'Presets'
     if presets_tab then
