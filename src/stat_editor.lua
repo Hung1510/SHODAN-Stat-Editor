@@ -1,14 +1,15 @@
 -- HD2-Addon: mods/shodan/stat_editor
--- SHODAN Stat Editor v1.0.0 by SHODAN. Requires Bingus Shared Loader (API 1).
-local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '1.0.0', author = 'SHODAN', log = 'SHODANStatEditor.log' }
+-- SHODAN Stat Editor v1.1.0 by SHODAN. Requires Bingus Shared Loader (API 1).
+local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '1.1.0', author = 'SHODAN', log = 'SHODANStatEditor.log' }
 if rawget(_G, MOD.global) then return end
 
--- Weapons: name, loadout slot, entity hash (from HD2Runtime's capability catalogs), variant note.
+-- Weapons: name, loadout slot, entity hash (from HD2Runtime's capability catalogs), variant note,
+-- projectile set by the default attachments (when they set one).
 local WEAPONS = {
     { 'AR-11 Arbitrator', 'Primary', 'A8A91EB54892B6B2', 'The rifle you carry. The underbarrel shotgun is listed separately.' },
     { 'AR-11 Arbitrator (underbarrel shotgun)', 'Primary', 'B9C209B4F99B5335', 'The Arbitrator\'s underbarrel shotgun, not the rifle itself.' },
     { 'AR-2 Coyote', 'Primary', '84354339522C932D', '' },
-    { 'AR-23 Liberator', 'Primary', '968211C0033DCE64', '' },
+    { 'AR-23 Liberator', 'Primary', '968211C0033DCE64', '', 276 },
     { 'AR-23A Liberator Carbine', 'Primary', 'A7EE1EBF58FCDF1F', '' },
     { 'AR-23C Liberator Concussive', 'Primary', 'CF5F176E0E322BE1', '' },
     { 'AR-23P Liberator Penetrator', 'Primary', '43CB1033961A2276', '' },
@@ -23,7 +24,7 @@ local WEAPONS = {
     { 'DBS-2 Double Freedom', 'Primary', '72170A55A1F37FF1', '' },
     { 'FLAM-66 Torcher', 'Primary', '4FB0F8C02F55C82B', '' },
     { 'GL-15 Evictor', 'Primary', '006E44327BB953FE', '' },
-    { 'JAR-5 Dominator', 'Primary', '80F1A156D9FA1E36', '' },
+    { 'JAR-5 Dominator', 'Primary', '80F1A156D9FA1E36', '', 177 },
     { 'LAS-12 Sai', 'Primary', 'C85F576D5E086147', '' },
     { 'LAS-13 Trident', 'Primary', '3C86E871923F3970', '' },
     { 'LAS-16 Sickle', 'Primary', '8645F167B3C813A2', '' },
@@ -42,12 +43,12 @@ local WEAPONS = {
     { 'R-36 Eruptor', 'Primary', 'B6AFF2195568767F', '' },
     { 'R-4 Hyena', 'Primary', 'E5796355A8FD67E0', '' },
     { 'R-6 Deadeye', 'Primary', 'E6D932BE83729076', '' },
-    { 'R-63 Diligence', 'Primary', '03E67A19B07C6523', '' },
+    { 'R-63 Diligence', 'Primary', '03E67A19B07C6523', '', 305 },
     { 'R-63CS Diligence Counter Sniper', 'Primary', '4C786785C79D44E7', '' },
     { 'R-72 Censor', 'Primary', 'F0338468DCDB6A6C', '' },
     { 'R/40-K Hot-Shot Marksman Rifle', 'Primary', '1ABBFF60D26BA391', '' },
     { 'SG-20 Halt', 'Primary', '4E310B1FE4C52B52', '' },
-    { 'SG-225 Breaker', 'Primary', '46183B50961D1328', '' },
+    { 'SG-225 Breaker', 'Primary', '46183B50961D1328', '', 179 },
     { 'SG-225IE Breaker Incendiary', 'Primary', 'C12A34F375BD5A87', '' },
     { 'SG-225SP Breaker Spray&Pray', 'Primary', '5EBAEA70C0D060B9', '' },
     { 'SG-451 Cookout', 'Primary', 'D323DE60855898AC', '' },
@@ -57,8 +58,8 @@ local WEAPONS = {
     { 'SG-97 Sweeper', 'Primary', 'DCD1C835407EF7BA', '' },
     { 'SMG-203 Gallant', 'Primary', '186EA95DE7306B1A', '' },
     { 'SMG-32 Reprimand', 'Primary', '94BD931B5FB4EE95', '' },
-    { 'SMG-37 Defender', 'Primary', '4E4A613EB9BF5C24', 'The one you carry.' },
-    { 'SMG-37 Defender (non-player copy)', 'Primary', 'CA4BBEF63C869C18', 'A copy that is not a loadout item (held by others). Not yours.' },
+    { 'SMG-37 Defender', 'Primary', '4E4A613EB9BF5C24', 'The one you carry.', 3 },
+    { 'SMG-37 Defender (non-player copy)', 'Primary', 'CA4BBEF63C869C18', 'A copy that is not a loadout item (held by others). Not yours.', 3 },
     { 'SMG-72 Pummeler', 'Primary', '0807AEA5217E4767', '' },
     { 'SMG/FLAM-34 Stoker', 'Primary', '8A307BD1811A5FE9', '' },
     { 'StA-11 SMG', 'Primary', '4BA41B6F9F405CC2', '' },
@@ -79,12 +80,12 @@ local WEAPONS = {
     { 'M6C/SOCOM Pistol', 'Secondary', '4D58C77087B774C5', '' },
     { 'P-11 Stim Pistol', 'Secondary', 'D6B1FB05B9109353', '' },
     { 'P-113 Verdict', 'Secondary', '1A437158E1B8D2A1', '' },
-    { 'P-19 Redeemer', 'Secondary', '3575AABC5F1F9326', '' },
-    { 'P-2 Peacemaker', 'Secondary', '05E4E5C2DB6E44A2', '' },
+    { 'P-19 Redeemer', 'Secondary', '3575AABC5F1F9326', '', 291 },
+    { 'P-2 Peacemaker', 'Secondary', '05E4E5C2DB6E44A2', '', 337 },
     { 'P-33 Missile Pistol', 'Secondary', '14D5D4506056C7A4', '' },
     { 'P-34 Breacher', 'Secondary', 'E91F569C2AD8AF01', '' },
     { 'P-35 Re-Educator', 'Secondary', '0B882808C6F498E8', '' },
-    { 'P-4 Senator', 'Secondary', '8D3D52A3B2F19402', '' },
+    { 'P-4 Senator', 'Secondary', '8D3D52A3B2F19402', '', 309 },
     { 'P-69 Veto', 'Secondary', 'C780BCD79547DA0F', '' },
     { 'P-72 Crisper', 'Secondary', '3F92BA65EF65CCA9', 'The one you carry.' },
     { 'P-72 Crisper (non-player copy)', 'Secondary', '992B6F65A5BAB53D', 'A copy that is not a loadout item (held by others). Not yours.' },
@@ -206,7 +207,7 @@ local STRATAGEMS = {
 --
 -- The tables are found by the shared scan (below), then parsed whole: keyed tables map a
 -- weapon's entity hash to its record, row tables map a row id to its row. A weapon's damage
--- comes through its projectile: fire mode (+0) or rounds record (+64) -> projectile row
+-- comes through its projectile: rounds record (+64), default attachment, or fire mode (+0) -> projectile row
 -- (+60) -> damage row; a beam weapon's through its beam: beam component (+0 beam type) -> beam
 -- row (+12) -> damage row. Several weapons can share one projectile or damage row; the panel says
 -- so, because editing it changes all of them.
@@ -931,7 +932,8 @@ local function hash_key(hex16)
 end
 
 for _, w in ipairs(WEAPONS) do
-    local weapon = { name = w[1], slot = w[2], hash = w[3], note = w[4] or '', key = hash_key(w[3]), rows = {}, by_id = {} }
+    local weapon = { name = w[1], slot = w[2], hash = w[3], note = w[4] or '', override = w[5], key = hash_key(w[3]),
+                     rows = {}, by_id = {} }
     weapons[#weapons + 1] = weapon
     by_hash[w[3]] = weapon
 end
@@ -961,6 +963,10 @@ local function resolve_gun(weapon, key)
     local projectile = nil
     local rounds, fire = record(T_ROUNDS), record(T_FIRE)
     if rounds then projectile = read_field(field_at(T_ROUNDS, rounds + 64, 'u32', 100000)) end
+    -- the default attachments (ammo type) can set the fire mode's projectile (Peacemaker, Redeemer)
+    if (projectile == nil or projectile == 0) and weapon.key == key and weapon.override then
+        projectile = weapon.override
+    end
     if fire and (projectile == nil or projectile == 0) then
         projectile = read_field(field_at(T_FIRE, fire, 'u32', 100000))
     end
