@@ -1,6 +1,6 @@
 -- HD2-Addon: mods/shodan/stat_editor
--- SHODAN Stat Editor v1.2.0 by SHODAN. Requires Bingus Shared Loader (API 1).
-local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '1.2.0', author = 'SHODAN', log = 'SHODANStatEditor.log' }
+-- SHODAN Stat Editor v1.3.0 by SHODAN. Requires Bingus Shared Loader (API 1).
+local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '1.3.0', author = 'SHODAN', log = 'SHODANStatEditor.log' }
 if rawget(_G, MOD.global) then return end
 
 -- Weapons: name, loadout slot, entity hash (from HD2Runtime's capability catalogs), variant note,
@@ -209,7 +209,9 @@ local STRATAGEMS = {
 -- weapon's entity hash to its record, row tables map a row id to its row. A weapon's damage
 -- comes through its projectile: rounds record (+64), default attachment, or fire mode (+0) -> projectile row
 -- (+60) -> damage row; a beam weapon's through its beam: beam component (+0 beam type) -> beam
--- row (+12) -> damage row. Several weapons can share one projectile or damage row; the panel says
+-- row (+12) -> damage row; a flame / gas weapon's through its spray component (+200) -> damage
+-- row. A damage row's status effects (+44: 4 x type, strength) name the burn / gas damage row
+-- (status row +44). Explosive projectiles name their explosion rows (radii). Several weapons can share one projectile or damage row; the panel says
 -- so, because editing it changes all of them.
 
 local HEADER_BYTES = 24
@@ -773,7 +775,7 @@ local T_WEAPON, T_MAGAZINE, T_ROUNDS = 0x88E4DBB1, 0xFB8D88A3, 0x66081072
 local T_FIRE, T_PROJECTILE, T_DAMAGE = 0x45171B68, 0xBD4042C2, 0xE0A72CF0
 local T_BEAM_WEAPON, T_BEAM = 0xF0721C2C, 0xC5085606
 local T_EXPLOSION, T_ORBITAL, T_STRATAGEM = 0x2AEA2592, 0x936A9C08, 0x30EB6399
-local T_HEAT = 0x4C981CD9
+local T_HEAT, T_SPRAY, T_STATUS = 0x4C981CD9, 0x8E551126, 0xC63E0B22
 local KINDS = {
     [T_WEAPON] = { name = 'weapon', stride = 1232, keyed = true },
     [T_MAGAZINE] = { name = 'magazine', stride = 160, keyed = true },
@@ -786,12 +788,15 @@ local KINDS = {
     [T_EXPLOSION] = { name = 'explosion', stride = 152, tail = true },
     [T_ORBITAL] = { name = 'orbital beam', stride = 552, keyed = true },
     [T_HEAT] = { name = 'weapon heat', stride = 592, keyed = true },
+    [T_SPRAY] = { name = 'spray weapon', stride = 224, keyed = true },
+    -- names: the status effects that deal damage, by type (the game's debug names Fire, Gas)
+    [T_STATUS] = { name = 'status effect', stride = 152, tail = true, names = { [5] = 'Burning', [32] = 'Heavy burning', [42] = 'Gas', [43] = 'Gas' } },
     -- one table per stratagem group (orbitals, eagles, backpacks, ...), rows keyed by the id at +4
     [T_STRATAGEM] = { name = 'stratagem', stride = 400, tail = true, id_at = 4, groups = true },
 }
 -- the tables the panel waits for (stratagem groups are taken as they come)
 local KIND_ORDER = { T_WEAPON, T_MAGAZINE, T_ROUNDS, T_FIRE, T_PROJECTILE, T_DAMAGE, T_BEAM_WEAPON, T_BEAM,
-                     T_EXPLOSION, T_ORBITAL, T_HEAT }
+                     T_EXPLOSION, T_ORBITAL, T_HEAT, T_SPRAY, T_STATUS }
 local ZERO8 = string.rep('\0', 8)
 
 -- kind -> { payload = size, index = key -> payload offset, entries = n, copies = { block address },
@@ -986,6 +991,12 @@ local function resolve_gun(weapon, key)
         local id = brow and read_field(field_at(T_BEAM, brow + 12, 'u32', 100000))
         drow = id and tables[T_DAMAGE] and tables[T_DAMAGE].index[id]
     end
+    -- flame and gas weapons: spray component (+200 damage row), damage per flame / gas hit
+    local spray = not drow and record(T_SPRAY)
+    if spray then
+        local id = read_field(field_at(T_SPRAY, spray + 200, 'u32', 100000))
+        drow = id and tables[T_DAMAGE] and tables[T_DAMAGE].index[id]
+    end
     weapon.projectile, weapon.damage_row = prow and projectile or nil, nil
     if drow then
         weapon.damage_row = true
@@ -1002,6 +1013,37 @@ local function resolve_gun(weapon, key)
         dmg('stagger', 'Stagger force', 32, 10000, 1, 10)
         dmg('push', 'Push force', 36, 10000, 1, 10)
     end
+    -- status effects the hit applies that deal damage (fire from flamers and incendiary rounds, gas):
+    -- how much each hit applies (this damage row's), then the status's damage row and duration
+    -- (every source of that status shares them)
+    if drow then
+        for i = 0, 3 do
+            local kind = read_field(field_at(T_DAMAGE, drow + 44 + i * 8, 'u32', 100000))
+            if not kind or kind == 0 then break end
+            local srow = tables[T_STATUS] and tables[T_STATUS].index[kind]
+            local sid = srow and read_field(field_at(T_STATUS, srow + 44, 'u32', 100000))
+            local qrow = sid and sid > 0 and tables[T_DAMAGE] and tables[T_DAMAGE].index[sid]
+            if qrow then
+                local name, key = KINDS[T_STATUS].names[kind] or ('Status ' .. kind), 'status' .. kind
+                add_row(weapon, 'Damage', key .. '_strength', name .. ' applied per hit', 'f32',
+                        { part(key .. '_strength', T_DAMAGE, drow + 48 + i * 8, 'f32', 100000) }, 0, 1000, 0.1, 1)
+                local section = name
+                local function sd(id, label, offset, max, small, big)
+                    return add_row(weapon, section, key .. '_' .. id, label, 'u32',
+                                   { part(key .. '_' .. id, T_DAMAGE, qrow + offset, 'u32', 1000000) }, 0, max, small, big)
+                end
+                local first = sd('damage', name .. ' damage', 4, 100000, 1, 10)
+                first.note = 'every ' .. name:lower() .. ' source shares these (other weapons, strikes, hazards, enemies)'
+                sd('durable', name .. ' durable damage', 8, 100000, 1, 10)
+                sd('ap_direct', 'Armor pen. (direct)', 12, 10, 1, 1)
+                sd('ap_slight', 'Armor pen. (slight angle)', 16, 10, 1, 1)
+                sd('ap_large', 'Armor pen. (large angle)', 20, 10, 1, 1)
+                sd('ap_extreme', 'Armor pen. (extreme angle)', 24, 10, 1, 1)
+                add_row(weapon, section, key .. '_duration', name .. ' duration (s)', 'f32',
+                        { part(key .. '_duration', T_STATUS, srow + 40, 'f32', 100000) }, 0, 600, 0.5, 5)
+            end
+        end
+    end
     if prow then
         local function proj(id, label, offset, max, small, big)
             add_row(weapon, 'Projectile', id, label, 'f32', { part(id, T_PROJECTILE, prow + offset, 'f32', 100000) }, 0, max, small, big)
@@ -1011,6 +1053,25 @@ local function resolve_gun(weapon, key)
         proj('velocity', 'Velocity (m/s)', 32, 20000, 10, 100)
         proj('drag', 'Drag factor', 40, 100, 0.05, 0.5)
         proj('pen_slowdown', 'Penetration slowdown', 64, 100, 0.05, 0.25)
+        -- explosions: the projectile's on impact (+144) and on expiry (+156, when another one)
+        -- -> explosion row (+16 inner, +20 outer, +24 shockwave radius)
+        local impact = read_field(field_at(T_PROJECTILE, prow + 144, 'u32', 100000))
+        local expiry = read_field(field_at(T_PROJECTILE, prow + 156, 'u32', 100000))
+        local blasts = {}
+        if impact and impact > 0 then blasts[#blasts + 1] = { id = impact, prefix = 'blast', section = 'Explosion' } end
+        if expiry and expiry > 0 and expiry ~= impact then
+            blasts[#blasts + 1] = { id = expiry, prefix = 'expiry', section = #blasts > 0 and 'Explosion (expiry)' or 'Explosion' }
+        end
+        for _, blast in ipairs(blasts) do
+            local xrow = tables[T_EXPLOSION] and tables[T_EXPLOSION].index[blast.id]
+            if xrow then
+                for _, r in ipairs({ { 'inner', 'Inner radius (m)', 16 }, { 'outer', 'Outer radius (m)', 20 },
+                                     { 'shockwave', 'Shockwave radius (m)', 24 } }) do
+                    local id = blast.prefix .. '_' .. r[1]
+                    add_row(weapon, blast.section, id, r[2], 'f32', { part(id, T_EXPLOSION, xrow + r[3], 'f32', 100000) }, 0, 200, 0.1, 1)
+                end
+            end
+        end
     end
     if fire then
         local rates = {}
@@ -1596,27 +1657,30 @@ for vk = 0x60, 0x69 do TEXT_KEYS[#TEXT_KEYS + 1] = vk end
 for vk = 0xBA, 0xC0 do TEXT_KEYS[#TEXT_KEYS + 1] = vk end
 for vk = 0xDB, 0xDF do TEXT_KEYS[#TEXT_KEYS + 1] = vk end
 for _, vk in ipairs(TEXT_KEYS) do VK['T' .. vk] = vk end
-local key_state, key_text = nil, nil
+local key_char
+do
+    local key_state, key_text = nil, nil
 
-local function utf8_char(c)
-    if c < 0x80 then return string.char(c) end
-    if c < 0x800 then return string.char(0xC0 + math.floor(c / 64), 0x80 + c % 64) end
-    return string.char(0xE0 + math.floor(c / 4096), 0x80 + math.floor(c / 64) % 64, 0x80 + c % 64)
-end
-
-local function key_char(vk)
-    if not key_state then key_state, key_text = ffi.new('uint8_t[256]'), ffi.new('uint16_t[4]') end
-    ffi.fill(key_state, 256)
-    for _, k in ipairs({ 0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5 }) do
-        if key_down(k) then key_state[k] = 0x80 end
+    local function utf8_char(c)
+        if c < 0x80 then return string.char(c) end
+        if c < 0x800 then return string.char(0xC0 + math.floor(c / 64), 0x80 + c % 64) end
+        return string.char(0xE0 + math.floor(c / 4096), 0x80 + math.floor(c / 64) % 64, 0x80 + c % 64)
     end
-    if user.GetKeyState(0x14) % 2 == 1 then key_state[0x14] = 1 end     -- Caps Lock on (low bit)
-    key_state[vk] = 0x80
-    -- flag 4: leaves the keyboard's own state (dead keys) alone
-    if user.ToUnicode(vk, user.MapVirtualKeyW(vk, 0), key_state, key_text, 4, 4) ~= 1 then return nil end
-    local c = key_text[0]
-    if c < 32 or c == 35 or c == 127 or (c >= 0xD800 and c < 0xE000) then return nil end
-    return utf8_char(c)
+
+    key_char = function(vk)
+        if not key_state then key_state, key_text = ffi.new('uint8_t[256]'), ffi.new('uint16_t[4]') end
+        ffi.fill(key_state, 256)
+        for _, k in ipairs({ 0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5 }) do
+            if key_down(k) then key_state[k] = 0x80 end
+        end
+        if user.GetKeyState(0x14) % 2 == 1 then key_state[0x14] = 1 end     -- Caps Lock on (low bit)
+        key_state[vk] = 0x80
+        -- flag 4: leaves the keyboard's own state (dead keys) alone
+        if user.ToUnicode(vk, user.MapVirtualKeyW(vk, 0), key_state, key_text, 4, 4) ~= 1 then return nil end
+        local c = key_text[0]
+        if c < 32 or c == 35 or c == 127 or (c >= 0xD800 and c < 0xE000) then return nil end
+        return utf8_char(c)
+    end
 end
 
 -- ---------------------------------------------------------------- panel
@@ -1624,16 +1688,33 @@ local sr = nil          -- the engine (stingray)
 local ui = { open = false, tab = 'Primary', page = 1, row = 1, scroll = 1, weapon = nil, hover = nil,
              gui = nil, world = nil, signature = nil, regions = {}, version = 0, errors = 0,
              wslot = 1, fslot = nil, fpage = 1, message = nil,   -- chosen weapon preset / full preset, status line
-             editing = nil, confirm = nil }   -- a preset name being typed; an overwrite / delete to confirm
+             editing = nil, confirm = nil,    -- a preset name being typed; an overwrite / delete to confirm
+             search = { text = '', active = false } }   -- the list's search (active: being typed)
 local TABS = { 'Primary', 'Secondary', 'Support', 'Stratagems', 'Presets' }
 local LIST_ROWS = 27
 local W, H = 1000, 980       -- panel size in its own units
 local SCALE = 0.8             -- panel units -> 1080p units
 
+-- The weapons (or stratagems) of a tab; tab '?search': those of every tab whose name holds every
+-- word of the search (any case).
 local function weapons_in(tab)
-    local list = {}
+    local list, words = {}, nil
+    if tab == '?search' then
+        words = {}
+        for word in ui.search.text:lower():gmatch('%S+') do words[#words + 1] = word end
+    end
     for _, weapon in ipairs(weapons) do
-        if weapon.slot == tab and #weapon.rows > 0 then list[#list + 1] = weapon end
+        if #weapon.rows > 0 then
+            if words then
+                local name, all = weapon.name:lower(), true
+                for _, word in ipairs(words) do
+                    if not name:find(word, 1, true) then all = false; break end
+                end
+                if all then list[#list + 1] = weapon end
+            elseif weapon.slot == tab then
+                list[#list + 1] = weapon
+            end
+        end
     end
     return list
 end
@@ -1743,7 +1824,7 @@ local function select_weapon(weapon)
     ui.row, ui.scroll = 1, 1
     if weapon then
         ui.tab = weapon.slot
-        local list = weapons_in(ui.tab)
+        local list = weapons_in(ui.search.text ~= '' and '?search' or ui.tab)
         for n, w in ipairs(list) do
             if w == weapon then ui.page = math.floor((n - 1) / LIST_ROWS) + 1 end
         end
@@ -2282,7 +2363,8 @@ local function draw(width, height)
     end
 
     -- weapon list
-    local list = presets_tab and {} or weapons_in(ui.tab)
+    local searching = ui.search.text ~= '' or ui.search.active
+    local list = presets_tab and {} or weapons_in(ui.search.text ~= '' and '?search' or ui.tab)
     local pages = math.max(1, math.ceil(#list / LIST_ROWS))
     if ui.page > pages then ui.page = pages end
     for k = 1, LIST_ROWS do
@@ -2290,17 +2372,32 @@ local function draw(width, height)
         if not weapon then break end
         local y = 96 + (k - 1) * 26
         local key = 'weapon:' .. weapon.hash
+        if searching then text(weapon.slot, 326, y + 5, 13, DIM, 80, true) end
         local selected = weapon == ui.weapon
         if selected then rect(16, y, 318, 25, color(90, 74, 8), 951)
         elseif ui.hover == key then rect(16, y, 318, 25, color(40, 52, 64), 951) end
-        text((modified(weapon) and '* ' or '') .. weapon.name, 24, y + 4, 16, modified(weapon) and GOLD or WHITE, 302)
+        text((modified(weapon) and '* ' or '') .. weapon.name, 24, y + 4, 16, modified(weapon) and GOLD or WHITE,
+             searching and 226 or 302)
         region(key, 16, y, 318, 25)
     end
     local py = 96 + LIST_ROWS * 26 + 8
     if not presets_tab then
+        if ui.search.text ~= '' and #list == 0 then text('Nothing matches.', 24, 100, 16, MUTED) end
         button('page:prev', '<', 16, py, 40, 30, ui.page > 1)
-        text('page ' .. ui.page .. ' of ' .. pages, 70, py + 7, 16, MUTED)
+        text('page ' .. ui.page .. ' of ' .. pages .. (ui.search.text ~= '' and ('   ' .. #list .. ' found') or ''),
+             70, py + 7, 16, MUTED, 214)
         button('page:next', '>', 294, py, 40, 30, ui.page < pages)
+        -- search box: click it (or Ctrl+F) and type; the list shows what matches, from every tab
+        local sy, active = py + 40, ui.search.active
+        rect(16, sy, 274, 30, active and color(20, 26, 34) or color(28, 34, 42), 951)
+        outline(16, sy, 274, 30, active and GOLD or (ui.hover == 'search' and GOLD or color(70, 82, 94)))
+        if ui.search.text == '' and not active then
+            text('Search weapons and stratagems', 24, sy + 7, 15, DIM, 258)
+        else
+            text(ui.search.text .. (active and '_' or ''), 24, sy + 6, 16, WHITE, 258)
+        end
+        region('search', 16, sy, 274, 30)
+        button('search:clear', 'X', 296, sy, 38, 30, ui.search.text ~= '')
         rect(343, 96, 2, H - 96 - 70, color(70, 82, 94), 951)
     end
 
@@ -2353,8 +2450,8 @@ local function draw(width, height)
                 end
                 if row.section ~= section then
                     section = row.section
-                    local note, others = '', shared_with(weapon, row)
-                    if #others > 0 then
+                    local note, others = row.note or '', shared_with(weapon, row)
+                    if note == '' and #others > 0 then
                         note = 'shared with ' .. table.concat(others, ', ', 1, math.min(3, #others)) ..
                                (#others > 3 and (' +' .. (#others - 3)) or '')
                     end
@@ -2392,6 +2489,9 @@ local function draw(width, height)
     if ui.editing then
         text('Type the name: Enter keeps it, Esc cancels. The game sees these keys too, so name presets from a menu.',
              18, H - 56, 14, MUTED, W - 36)
+    elseif ui.search.active and not presets_tab then
+        text('Type to search: Enter keeps the results, Esc clears the search. The game sees these keys too.',
+             18, H - 56, 14, MUTED, W - 36)
     elseif presets_tab then
         text('Up/Down choose, Enter loads, Insert makes a new one, Shift+Insert saves into it, F2 renames, Del deletes.',
              18, H - 56, 14, MUTED, W - 36)
@@ -2428,7 +2528,11 @@ local function click(key)
     local kind, arg = key:match('^([%w_]+):?(.*)$')
     -- clicking anything else while naming keeps the name typed so far
     if ui.editing and kind ~= 'name' then presets.finish_rename(true) end
-    if kind == 'tab' then ui.tab, ui.page = arg, 1
+    if ui.search.active and kind ~= 'search' then ui.search.active = false end
+    if kind == 'tab' then ui.tab, ui.page, ui.search = arg, 1, { text = '', active = false }
+    elseif kind == 'search' then
+        if arg == 'clear' then ui.search, ui.page = { text = '', active = false }, 1
+        else ui.search.active = true end
     elseif kind == 'weapon' then select_weapon(by_hash[arg])
     elseif kind == 'page' then ui.page = ui.page + (arg == 'next' and 1 or -1)
     elseif kind == 'reset_all' then reset_all()
@@ -2485,6 +2589,25 @@ local function keyboard(now)
                 if c then presets.type_char(c) end
             end
         end
+        return
+    end
+    if ui.search.active then
+        local search = ui.search
+        if pressed('Escape', now) then ui.search, ui.page = { text = '', active = false }, 1; return end
+        if pressed('Enter', now) then search.active = false; return end
+        if pressed('Backspace', now) then
+            search.text, ui.page = search.text:gsub('[%z\1-\127\194-\244][\128-\191]*$', ''), 1
+        end
+        for _, vk in ipairs(TEXT_KEYS) do
+            if pressed('T' .. vk, now) then
+                local c = key_char(vk)
+                if c and #search.text + #c <= 40 then search.text, ui.page = search.text .. c, 1 end
+            end
+        end
+        return
+    end
+    if ui.tab ~= 'Presets' and key_down(VK.Ctrl) and pressed('T70', now) then     -- Ctrl+F
+        ui.search.active = true
         return
     end
     if pressed('PageDown', now) or pressed('PageUp', now) then
@@ -2700,7 +2823,8 @@ local function panel_frame(now)
     local signature = table.concat({ width, height, state.phase, state.tables, ui.tab, ui.page, ui.row, ui.scroll,
                                      tostring(ui.hover), ui.weapon and ui.weapon.hash or '-', ui.version,
                                      #overrides, ui.wslot, tostring(ui.fslot), ui.fpage,
-                                     ui.message and ui.message.text or '', ui.editing and ui.editing.text or '-' }, '|')
+                                     ui.message and ui.message.text or '', ui.editing and ui.editing.text or '-',
+                                     ui.search.text, tostring(ui.search.active) }, '|')
     if signature ~= ui.signature then
         -- a fresh gui each time: nothing drawn before can linger
         if ui.gui then
@@ -2750,7 +2874,7 @@ local function open_panel(open)
         clear_gui()
         ui.worlds = nil
         held, mouse_was_down, armed = {}, nil, nil
-        ui.editing, ui.confirm = nil, nil
+        ui.editing, ui.confirm, ui.search.active = nil, nil, false
     end
 end
 
