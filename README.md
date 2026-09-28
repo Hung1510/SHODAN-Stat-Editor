@@ -103,5 +103,10 @@ match, which is usually enough to find the cause.
   data dump by shalzuth, for the game's data layouts.
 - **DiverKit** and **HD2 HUD Plus**, which showed where the game's UI font lives.
 
+## License
+
+Public domain ([The Unlicense](LICENSE)). Use, change, share or sell it however you like; no
+credit needed.
+
 SHODAN Stat Editor is not affiliated with or endorsed by Arrowhead Game Studios or Sony
 Interactive Entertainment.
