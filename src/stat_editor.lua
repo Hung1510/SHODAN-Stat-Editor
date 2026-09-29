@@ -2835,7 +2835,7 @@ end
 -- ---------------------------------------------------------------- panel
 local sr = nil          -- the engine (stingray)
 -- page / fpage: the first row the weapon / full preset list shows (the lists scroll by rows)
-local ui = { open = false, tab = 'Primary', page = 1, row = 1, scroll = 1, weapon = nil, hover = nil,
+local ui = { open = false, measured = {}, measures = 0, tab = 'Primary', page = 1, row = 1, scroll = 1, weapon = nil, hover = nil,
              gui = nil, world = nil, signature = nil, regions = {}, version = 0, errors = 0,
              wslot = 1, fslot = nil, fpage = 1, message = nil,   -- chosen weapon preset / full preset, status line
              editing = nil, confirm = nil,    -- a preset name being typed; an overwrite / delete to confirm
@@ -2890,6 +2890,7 @@ end
 local DEBUG_FONT = 'core/performance_hud/debug'
 
 local function read_font_ids()
+    if state.font_ids then return state.font_ids end
     local base = ffi.load('kernel32').GetModuleHandleA('game.dll')
     if base == nil then return nil, 'game.dll not found' end
     base = tonumber(ffi.cast('uintptr_t', base))
@@ -2903,7 +2904,8 @@ local function read_font_ids()
     local owner_at = owner and (u32(owner, 0) + u32(owner, 4) * 4294967296)
     local material_id = owner_at and owner_at ~= 0 and resource_hex(api.read(owner_at + 24, 8))
     if not (font_id and atlas_id and material_id) then return nil, 'font ids not set yet' end
-    return { font = font_id, material = material_id, atlas = atlas_id }
+    state.font_ids = { font = font_id, material = material_id, atlas = atlas_id }
+    return state.font_ids
 end
 
 -- true / false when the engine answers, nil when it cannot be asked
@@ -3447,14 +3449,20 @@ local function draw(width, height)
         size = size * s
         local px = ox + x * s
         if limit or align_right then
-            step('Gui.text_extents')
-            local ok, lo, hi = pcall(Gui.text_extents, gui, value, ink_font, size)
-            local measure = nil
-            if ok and lo and hi then
-                local a, b = vx(lo), vx(hi)
-                if a and b and b > a then measure = b - a end
+            -- widths are measured once per text, size and font (the panel redraws often)
+            local key = value .. '|' .. size
+            local measure = ui.measured[key]
+            if not measure then
+                step('Gui.text_extents')
+                local ok, lo, hi = pcall(Gui.text_extents, gui, value, ink_font, size)
+                if ok and lo and hi then
+                    local a, b = vx(lo), vx(hi)
+                    if a and b and b > a then measure = b - a end
+                end
+                measure = measure or #value * size * 0.5
+                if ui.measures > 5000 then ui.measured, ui.measures = {}, 0 end
+                ui.measured[key], ui.measures = measure, ui.measures + 1
             end
-            measure = measure or #value * size * 0.5
             if limit and measure > limit * s then size = size * limit * s / measure; measure = limit * s end
             if align_right then px = px - measure end
         end
@@ -4527,6 +4535,7 @@ local function panel_frame(now)
         font = ok and chosen or { text = 'no text: ' .. tostring(chosen) }
         if font.text ~= ui.font_said then
             ui.font_said = font.text
+            ui.measured, ui.measures = {}, 0
             log('font: ' .. font.text)
             flush_log()
         end
