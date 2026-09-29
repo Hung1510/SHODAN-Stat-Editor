@@ -1706,25 +1706,38 @@ local function resolve_gun(weapon, key)
     local strike = melee and weapon.key == key and KINDS[T_MELEE].explosions[weapon.hash]
     if strike then blasts[#blasts + 1] = { id = strike, prefix = 'blast', section = 'Explosion', damage = true } end
     explosion_rows()
-    -- each shot of a charge weapon: its direct hit and projectile, then its explosion. A direct hit two
-    -- shots share (Loyalist, Purifier) is one set of values, shown under both.
+    -- each shot of a charge weapon: its direct hit and projectile, then its explosion. A direct hit a
+    -- later shot shares with an earlier one (Loyalist, Purifier: one damage row) is listed once, under
+    -- the earlier shot; the later shot's ids for it stay as aliases (weapon.aliases: id -> listed id),
+    -- so saved values and presets that name them still apply.
     local hits = {}
     for _, shot in ipairs(shots or {}) do
         local section = shot.name .. ' shot'
         local id = read_field(field_at(T_PROJECTILE, shot.prow + 60, 'u32', 100000))
         local qrow = id and tables[T_DAMAGE] and tables[T_DAMAGE].index[id]
-        if qrow then
+        local before = qrow and hits[qrow]
+        if before then
+            weapon.aliases = weapon.aliases or {}
+            for _, listed in ipairs(before.ids) do
+                local alias = shot.prefix .. listed:sub(#before.prefix + 1)
+                weapon.by_id[alias], weapon.aliases[alias] = weapon.by_id[listed], listed
+            end
+            before.first.note = before.first.note or ('direct hit: also the ' .. shot.name:lower() .. ' shot\'s')
+        elseif qrow then
+            local from = #weapon.rows + 1
             local first = damage_rows(weapon, section, shot.prefix, qrow)
             status_rows(weapon, section, shot.prefix, qrow, 'hit')
-            local before = hits[qrow]
-            if before then
-                first.note = 'direct hit: one set of values with the ' .. before.name:lower() .. ' shot'
-                before.first.note = before.first.note or ('direct hit: one set of values with the ' .. shot.name:lower() .. ' shot')
-            else
-                hits[qrow] = { name = shot.name, first = first }
+            local ids = {}
+            for k = from, #weapon.rows do
+                for _, p in ipairs(weapon.rows[k].parts) do ids[#ids + 1] = p.id end
             end
+            hits[qrow] = { name = shot.name, first = first, prefix = shot.prefix, ids = ids }
         end
+        local from = #weapon.rows + 1
         projectile_rows(shot.prow, shot.prefix, section, shot.name .. ' explosion')
+        if before and weapon.rows[from] then
+            weapon.rows[from].note = 'direct hit: see the ' .. before.name:lower() .. ' shot'
+        end
         explosion_rows()
     end
     -- the charge: its stages' times, the overcharge limit, and the multipliers it puts on the shot
@@ -2266,7 +2279,7 @@ local function resolve_throwable(entry)
 end
 
 local function resolve(weapon)
-    weapon.rows, weapon.by_id = {}, {}
+    weapon.rows, weapon.by_id, weapon.aliases = {}, {}, nil
     if weapon.slot == 'Throwables' then resolve_throwable(weapon); return end
     if weapon.passive then KINDS[TYPES.passive].resolve(weapon); return end
     if weapon.stratagem then resolve_stratagem(weapon); return end
@@ -3172,8 +3185,11 @@ do
         if not settings.changes then say('Your changes are off: turn them on in Settings to load a preset'); return end
         local values = weapon_preset(weapon, n)
         if not values then say(weapon.name .. ' preset ' .. n .. ' is empty'); return end
-        local want = {}
-        for _, v in ipairs(values) do want[v.id] = v.value end
+        local want, aliases = {}, weapon.aliases or {}
+        for _, v in ipairs(values) do
+            local id = aliases[v.id] or v.id
+            if want[id] == nil or id == v.id then want[id] = v.value end
+        end
         local refused = 0
         for _, row in ipairs(weapon.rows) do
             for _, p in ipairs(row.parts) do
