@@ -928,6 +928,53 @@ local function set_status(phase, status)
     log(phase .. ': ' .. status)
 end
 
+-- Frame profiler: the time each part of a frame takes (lap), the worst per part, and a log line
+-- for every frame over SLOW seconds (the first 60) plus a summary once a minute when anything got worse.
+state.perf = { SLOW = 0.012, t = 0, start = 0, parts = {}, worst = {}, worst_total = 0, slow = 0, changed = false, next_summary = 0 }
+do
+    local P = state.perf
+    local function parts_text(parts, floor)
+        local list = {}
+        for name, v in pairs(parts) do if v >= floor then list[#list + 1] = { name, v } end end
+        table.sort(list, function(a, b) return a[2] > b[2] end)
+        for k, e in ipairs(list) do list[k] = string.format('%s %.1f', e[1], e[2] * 1000) end
+        return table.concat(list, ', ')
+    end
+    function P.begin(now)
+        P.start, P.t = now, now
+        for k in pairs(P.parts) do P.parts[k] = nil end
+    end
+    function P.lap(name)
+        local t = api.now()
+        P.parts[name] = (P.parts[name] or 0) + (t - P.t)
+        P.t = t
+    end
+    -- a part timed on its own (the shared scan's frame, one of the startup steps)
+    function P.alone(name, seconds)
+        if seconds > (P.worst[name] or 0) then P.worst[name], P.changed = seconds, true end
+        if seconds >= P.SLOW and P.slow < 60 then
+            P.slow = P.slow + 1
+            log(string.format('slow frame: %.1f ms (%s)', seconds * 1000, name))
+        end
+    end
+    function P.finish()
+        local t = api.now()
+        local total = t - P.start
+        for name, v in pairs(P.parts) do
+            if v > (P.worst[name] or 0) then P.worst[name], P.changed = v, true end
+        end
+        if total > P.worst_total then P.worst_total, P.changed = total, true end
+        if total >= P.SLOW and P.slow < 60 then
+            P.slow = P.slow + 1
+            log(string.format('slow frame: %.1f ms (%s)', total * 1000, parts_text(P.parts, 0.0003)))
+        end
+        if P.changed and t >= P.next_summary then
+            P.changed, P.next_summary = false, t + 60
+            log(string.format('frame time: worst %.1f ms; worst by part (ms): %s', P.worst_total * 1000, parts_text(P.worst, 0)))
+        end
+    end
+end
+
 -- ---------------------------------------------------------------- tables
 local T_WEAPON, T_MAGAZINE, T_ROUNDS = 0x88E4DBB1, 0xFB8D88A3, 0x66081072
 local T_FIRE, T_PROJECTILE, T_DAMAGE = 0x45171B68, 0xBD4042C2, 0xE0A72CF0
@@ -4434,6 +4481,7 @@ local function panel_frame(now)
     if not ui.hover and not ui.drag then mouse_was_down, armed = nil, nil end
     if window then keyboard(now) end
 
+    state.perf.lap('panel input')
     -- redraw when anything shown changed
     local width, height = sr.Gui.resolution()
     if ui.message and api.now() >= ui.message.till then ui.message = nil end
@@ -4453,6 +4501,7 @@ local function panel_frame(now)
         end
         step('World.create_screen_gui')
         ui.gui = sr.World.create_screen_gui(ui.world, 'scale', 1, 1)
+        state.perf.lap('panel gui')
         if not ui.gui then
             log('panel: the overlay world refused a gui')
             clear_gui()
@@ -4466,7 +4515,9 @@ local function panel_frame(now)
             flush_log()
         end
         ui.signature = signature
+        state.perf.lap('panel font')
         ui.regions = draw(width, height)
+        state.perf.lap('panel draw')
         draws = draws + 1
         if trace_left > 0 then
             trace_left, traced = trace_left - 1, {}
@@ -4516,8 +4567,10 @@ local next_retry, next_flush = 0, 0
 local function tick()
     state.frame = state.frame + 1
     local now = api.now()
+    state.perf.begin(now)
     if state.phase == 'preparing' then
         prepare(now + FRAME_BUDGET)
+        state.perf.lap('prepare')
     elseif state.phase == 'ready' then
         if #pending > 0 and now >= next_retry then
             if apply_config(now + FRAME_BUDGET) then
@@ -4525,7 +4578,9 @@ local function tick()
                 if #pending == 0 then log('all saved values applied (' .. state.applied .. ')') end
             end
         end
+        state.perf.lap('apply')
         if config_dirty_at and now >= config_dirty_at then save_config() end
+        state.perf.lap('save')
     end
 
     -- hotkey: one key-state read per frame; the window check only while the key is down
@@ -4537,6 +4592,7 @@ local function tick()
         open_panel(not ui.open)
     end
     hotkey_was_down = down
+    state.perf.lap('hotkey')
 
     if not ui.open and cursor.raw.saved then pcall(cursor.give_input, now) end
     if ui.open then
@@ -4555,7 +4611,10 @@ local function tick()
             end
         end
     end
+    state.perf.lap('panel')
     if log_dirty and now >= next_flush then next_flush = now + 1; flush_log() end
+    state.perf.lap('log')
+    state.perf.finish()
 end
 
 -- ---------------------------------------------------------------- startup
@@ -4612,6 +4671,14 @@ if type(hub) ~= 'table' or hub.version ~= HUB_VERSION then
     hub = new_hub(api, skip_low)
     rawset(_G, HUB_NAME, hub)
     BUS.jobs[HUB_NAME] = hub.tick
+end
+-- the shared scan's frames, timed (it runs as its own job)
+if BUS.jobs[HUB_NAME] == hub.tick then
+    BUS.jobs[HUB_NAME] = function()
+        local started = api.now()
+        hub.tick()
+        state.perf.alone('scan', api.now() - started)
+    end
 end
 hub.register({ name = MOD.title, searching = searching, wants = wants, handle = handle_table,
                after_pass = after_pass })
