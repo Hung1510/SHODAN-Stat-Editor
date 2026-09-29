@@ -939,7 +939,7 @@ local TYPES = { arc_weapon = 0xB87BA9ED, arc = 0xAFDF0267, health = 0xB3915DE3, 
                 turret = 0x1EBA7593, custom = 0xEBA8F3D0, items = 0x1E604234, deltas = 0x683E604F,
                 throwable = 0xAF16BCB5, explosive = 0xF5CF9B8C, sticky = 0x9AF175A4, passive = 0x63CE0FEB,
                 vehicle = 0xEAEB2B0D, mount = 0x3845B1E0, shield = 0x5154DB66,
-                rack = 0xA98BB156 }
+                rack = 0xA98BB156, charge = 0xEAC335A1 }
 local KINDS = {
     [T_WEAPON] = { name = 'weapon', stride = 1232, keyed = true },
     [T_MAGAZINE] = { name = 'magazine', stride = 160, keyed = true },
@@ -1005,12 +1005,18 @@ local KINDS = {
     -- hellpod racks (HellpodRackComponentData): a backpack stratagem's pod; 8 slots of 64 bytes, +0 the
     -- entity each carries
     [TYPES.rack] = { name = 'hellpod rack', stride = 568, keyed = true },
+    -- charge weapons (WeaponChargeComponentData): 3 stages of 24 bytes (+0 charge time, +4 projectile),
+    -- the multipliers the charge puts on the shot (+72: 6 pairs, at min charge / at overcharge), +208
+    -- the overcharge limit. The plasma weapons fire their stages' projectiles, not the fire mode's.
+    [TYPES.charge] = { name = 'weapon charge', stride = 216, keyed = true, MULTIPLIERS = {
+        { 'speed', 'Velocity', 72 }, { 'damage', 'Damage', 80 }, { 'pen', 'Pen.', 88 }, { 'range', 'Range', 96 },
+        { 'arc_splits', 'Arc splits', 104, arc = true }, { 'arc_chains', 'Arc chains', 112, arc = true } } },
 }
 -- the tables the panel waits for (stratagem groups are taken as they come)
 local KIND_ORDER = { T_WEAPON, T_MAGAZINE, T_ROUNDS, T_FIRE, T_PROJECTILE, T_DAMAGE, T_BEAM_WEAPON, T_BEAM,
                      T_EXPLOSION, T_ORBITAL, T_HEAT, T_SPRAY, T_STATUS, T_MELEE, TYPES.arc_weapon, TYPES.arc,
                      TYPES.health, TYPES.sensor, TYPES.detector, TYPES.turret, TYPES.custom, TYPES.deltas,
-                     TYPES.throwable, TYPES.explosive, TYPES.sticky }
+                     TYPES.throwable, TYPES.explosive, TYPES.sticky, TYPES.charge }
 
 -- The deltas table: five arrays (pointer, count) head the payload: resource -> slot (u64, u32),
 -- slot -> components (count, first), component (index, first delta, count), delta (offset in the
@@ -1532,6 +1538,33 @@ local function status_rows(entry, section, prefix, drow, per)
     end
 end
 
+-- A charge weapon's shots, when its stages name projectiles (the plasma weapons: Loyalist and
+-- Purifier fire one projectile uncharged and another charged, the Epoch one at partial and another
+-- at full charge; a stage without one fires `fired`, the fire mode's). In stage order: { id, prow,
+-- stage, last (stages it fires at), name, prefix: '' for the fire mode's projectile, so its ids stay
+-- those of a plain weapon, else 'c<stage>_' }. nil when every stage fires the fire mode's projectile.
+KINDS[TYPES.charge].shots = function(at, fired)
+    local list, by = {}, {}
+    for s = 1, 3 do
+        local id = read_field(field_at(TYPES.charge, at + (s - 1) * 24 + 4, 'u32', 100000))
+        if id == 0 then id = fired end
+        local prow = id and id > 0 and tables[T_PROJECTILE] and tables[T_PROJECTILE].index[id]
+        if prow then
+            if not by[id] then by[id] = { id = id, prow = prow, stage = s }; list[#list + 1] = by[id] end
+            by[id].last = s
+        end
+    end
+    if #list == 0 or (#list == 1 and list[1].id == fired) then return nil end
+    -- a first stage that fires at once (0.01 s) is the uncharged shot
+    local quick = (default_of(field_at(TYPES.charge, at, 'f32', 100000)) or 1) < 0.1
+    local names = #list == 2 and (quick and { 'Uncharged', 'Charged' } or { 'Partial charge', 'Full charge' })
+    for k, shot in ipairs(list) do
+        shot.name = names and names[k] or (#list == 1 and 'Charged' or ('Stage ' .. shot.stage))
+        shot.prefix = shot.id == fired and '' or ('c' .. shot.stage .. '_')
+    end
+    return list
+end
+
 local function resolve_gun(weapon, key)
     local function record(kind)
         local entry = tables[kind]
@@ -1569,6 +1602,10 @@ local function resolve_gun(weapon, key)
         projectile = read_field(field_at(T_FIRE, fire, 'u32', 100000))
     end
     local prow = projectile and projectile > 0 and tables[T_PROJECTILE] and tables[T_PROJECTILE].index[projectile]
+    -- charge weapons whose stages fire their own projectiles: those, not the fire mode's
+    local charge = record(TYPES.charge)
+    local shots = charge and KINDS[TYPES.charge].shots(charge, projectile)
+    if shots then prow = nil end
     local drow = nil
     if prow then
         local id = read_field(field_at(T_PROJECTILE, prow + 60, 'u32', 100000))
@@ -1624,40 +1661,101 @@ local function resolve_gun(weapon, key)
         end
     end
     local blasts = {}
-    if prow then
+    -- a projectile's rows (ids `idp` .. stat) in `section`, and its explosions, to add after it: on
+    -- impact (+144) and on expiry (+156, when another one) -> explosion row (+4 damage row, +16 inner,
+    -- +20 outer, +24 shockwave radius), in `xsection` ('Explosion', or the shot's)
+    local function projectile_rows(p, idp, section, xsection)
         local function proj(id, label, offset, max, small, big)
-            add_row(weapon, 'Projectile', id, label, 'f32', { part(id, T_PROJECTILE, prow + offset, 'f32', 100000) }, 0, max, small, big)
+            add_row(weapon, section, idp .. id, label, 'f32', { part(idp .. id, T_PROJECTILE, p + offset, 'f32', 100000) },
+                    0, max, small, big)
         end
-        add_row(weapon, 'Projectile', 'pellets', 'Projectiles per shot', 'u32',
-                { part('pellets', T_PROJECTILE, prow + 28, 'u32', 1000) }, 1, 100, 1, 5)
+        add_row(weapon, section, idp .. 'pellets', 'Projectiles per shot', 'u32',
+                { part(idp .. 'pellets', T_PROJECTILE, p + 28, 'u32', 1000) }, 1, 100, 1, 5)
         proj('velocity', 'Velocity (m/s)', 32, 20000, 10, 100)
         proj('drag', 'Drag factor', 40, 100, 0.05, 0.5)
         proj('pen_slowdown', 'Penetration slowdown', 64, 100, 0.05, 0.25)
-        -- explosions: the projectile's on impact (+144) and on expiry (+156, when another one)
-        -- -> explosion row (+4 damage row, +16 inner, +20 outer, +24 shockwave radius)
-        local impact = read_field(field_at(T_PROJECTILE, prow + 144, 'u32', 100000))
-        local expiry = read_field(field_at(T_PROJECTILE, prow + 156, 'u32', 100000))
-        if impact and impact > 0 then blasts[#blasts + 1] = { id = impact, prefix = 'blast', section = 'Explosion', damage = true } end
+        local impact = read_field(field_at(T_PROJECTILE, p + 144, 'u32', 100000))
+        local expiry = read_field(field_at(T_PROJECTILE, p + 156, 'u32', 100000))
+        local first = #blasts
+        if impact and impact > 0 then blasts[#blasts + 1] = { id = impact, prefix = idp .. 'blast', section = xsection, damage = true } end
         if expiry and expiry > 0 and expiry ~= impact then
-            blasts[#blasts + 1] = { id = expiry, prefix = 'expiry', section = #blasts > 0 and 'Explosion (expiry)' or 'Explosion',
+            blasts[#blasts + 1] = { id = expiry, prefix = idp .. 'expiry', section = #blasts > first and (xsection .. ' (expiry)') or xsection,
                                     damage = true }
         end
     end
+    local function explosion_rows()
+        for _, blast in ipairs(blasts) do
+            local xrow = tables[T_EXPLOSION] and tables[T_EXPLOSION].index[blast.id]
+            if xrow then
+                local id = blast.damage and read_field(field_at(T_EXPLOSION, xrow + 4, 'u32', 100000))
+                local qrow = id and id > 0 and tables[T_DAMAGE] and tables[T_DAMAGE].index[id]
+                if qrow then
+                    damage_rows(weapon, blast.section, blast.prefix .. '_', qrow, 'Explosion')
+                end
+                for _, r in ipairs({ { 'inner', 'Inner radius (m)', 16 }, { 'outer', 'Outer radius (m)', 20 },
+                                     { 'shockwave', 'Shockwave radius (m)', 24 } }) do
+                    local rid = blast.prefix .. '_' .. r[1]
+                    add_row(weapon, blast.section, rid, r[2], 'f32', { part(rid, T_EXPLOSION, xrow + r[3], 'f32', 100000) }, 0, 200, 0.1, 1)
+                end
+            end
+        end
+        blasts = {}
+    end
+    if prow then projectile_rows(prow, '', 'Projectile', 'Explosion') end
     -- a melee strike's explosion (Breaching Hammer), with its damage row (explosion +4)
     local strike = melee and weapon.key == key and KINDS[T_MELEE].explosions[weapon.hash]
     if strike then blasts[#blasts + 1] = { id = strike, prefix = 'blast', section = 'Explosion', damage = true } end
-    for _, blast in ipairs(blasts) do
-        local xrow = tables[T_EXPLOSION] and tables[T_EXPLOSION].index[blast.id]
-        if xrow then
-            local id = blast.damage and read_field(field_at(T_EXPLOSION, xrow + 4, 'u32', 100000))
-            local qrow = id and id > 0 and tables[T_DAMAGE] and tables[T_DAMAGE].index[id]
-            if qrow then
-                damage_rows(weapon, blast.section, blast.prefix .. '_', qrow, 'Explosion')
+    explosion_rows()
+    -- each shot of a charge weapon: its direct hit and projectile, then its explosion. A direct hit two
+    -- shots share (Loyalist, Purifier) is one set of values, shown under both.
+    local hits = {}
+    for _, shot in ipairs(shots or {}) do
+        local section = shot.name .. ' shot'
+        local id = read_field(field_at(T_PROJECTILE, shot.prow + 60, 'u32', 100000))
+        local qrow = id and tables[T_DAMAGE] and tables[T_DAMAGE].index[id]
+        if qrow then
+            local first = damage_rows(weapon, section, shot.prefix, qrow)
+            status_rows(weapon, section, shot.prefix, qrow, 'hit')
+            local before = hits[qrow]
+            if before then
+                first.note = 'direct hit: one set of values with the ' .. before.name:lower() .. ' shot'
+                before.first.note = before.first.note or ('direct hit: one set of values with the ' .. shot.name:lower() .. ' shot')
+            else
+                hits[qrow] = { name = shot.name, first = first }
             end
-            for _, r in ipairs({ { 'inner', 'Inner radius (m)', 16 }, { 'outer', 'Outer radius (m)', 20 },
-                                 { 'shockwave', 'Shockwave radius (m)', 24 } }) do
-                local rid = blast.prefix .. '_' .. r[1]
-                add_row(weapon, blast.section, rid, r[2], 'f32', { part(rid, T_EXPLOSION, xrow + r[3], 'f32', 100000) }, 0, 200, 0.1, 1)
+        end
+        projectile_rows(shot.prow, shot.prefix, section, shot.name .. ' explosion')
+        explosion_rows()
+    end
+    -- the charge: its stages' times, the overcharge limit, and the multipliers it puts on the shot
+    if charge then
+        local function cf(offset) return field_at(TYPES.charge, charge + offset, 'f32', 100000) end
+        local note = nil
+        if shots then
+            local said = {}
+            for _, shot in ipairs(shots) do
+                said[#said + 1] = (shot.last > shot.stage and ('stages ' .. shot.stage .. '-' .. shot.last) or ('stage ' .. shot.stage))
+                                  .. ': ' .. shot.name:lower() .. ' shot'
+            end
+            note = table.concat(said, ', ')
+        end
+        for s = 1, 3 do
+            local row = add_row(weapon, 'Charge', 'charge_' .. s, 'Stage ' .. s .. ' charge time (s)', 'f32',
+                                { part('charge_' .. s, TYPES.charge, charge + (s - 1) * 24, 'f32', 100000) }, 0, 600, 0.05, 0.25)
+            if s == 1 then row.note = note end
+        end
+        local limit = default_of(cf(208))
+        if limit and limit > 0 then
+            add_row(weapon, 'Charge', 'charge_limit', 'Overcharge limit (s)', 'f32',
+                    { part('charge_limit', TYPES.charge, charge + 208, 'f32', 100000) }, 0, 600, 0.05, 0.25)
+        end
+        for _, m in ipairs(KINDS[TYPES.charge].MULTIPLIERS) do
+            if not m.arc or record(TYPES.arc_weapon) then
+                for k, at in ipairs({ { '_min', ', min charge' }, { '_max', ', overcharge' } }) do
+                    local id = 'mul_' .. m[1] .. at[1]
+                    add_row(weapon, 'Charge', id, m[2] .. ' multiplier' .. at[2], 'f32',
+                            { part(id, TYPES.charge, charge + m[3] + (k - 1) * 4, 'f32', 100000) }, 0, 100, 0.05, 0.25)
+                end
             end
         end
     end
@@ -3581,7 +3679,9 @@ local function draw(width, height)
                                (#others > 3 and (' +' .. (#others - 3)) or '')
                     end
                     text(section:upper(), x0, y + 4, 15, MUTED)
-                    if note ~= '' then text(note, x0 + 110, y + 4, 14, WARN, W - x0 - 130) end
+                    -- the note after the section's name (long ones: 'PARTIAL CHARGE EXPLOSION')
+                    local nx = math.max(110, #section * 10 + 14)
+                    if note ~= '' then text(note, x0 + nx, y + 4, 14, WARN, W - x0 - 20 - nx) end
                     y = y + 24
                 end
                 local value, default = row_value(row), row_value(row, true)
