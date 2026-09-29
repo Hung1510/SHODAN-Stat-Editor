@@ -1857,6 +1857,14 @@ end
 local overrides = {}    -- list of { hash, id, value }
 local hotkey_name = 'F8'
 local config_dirty_at = nil
+-- The Settings page's choices, saved in config.txt with the changes. changes: apply the changes
+-- (off: every value is the game's, the changes are kept); block_input: the game gets no keyboard /
+-- mouse input while the panel is open; size: panel height, % of the screen's; side: 'left' / 'right';
+-- opacity: background, %; confirm_reset: Reset all asks twice; remember: reopen on the last tab / weapon.
+local settings = { changes = true, block_input = true, size = 80, side = 'right', opacity = 90,
+                   confirm_reset = true, remember = true, last_tab = nil, last_weapon = nil,
+                   GITHUB = 'https://github.com/SHODAN-HORAI/SHODAN-Stat-Editor',
+                   RANGE = { size = { 50, 100 }, opacity = { 10, 100 } } }
 
 local function config_path()
     local dir = data_dir('StatEditor')
@@ -1868,6 +1876,13 @@ local function number_text(v)
     return (string.format('%.4f', v):gsub('0+$', ''):gsub('%.$', ''))
 end
 
+function settings.set_percent(name, value)
+    local r = settings.RANGE[name]
+    local v = math.floor(value + 0.5)
+    settings[name] = math.max(r[1], math.min(r[2], v))
+    return settings[name] ~= v
+end
+
 local function save_config()
     config_dirty_at = nil
     local path = config_path()
@@ -1875,8 +1890,18 @@ local function save_config()
     local lines = {
         '# SHODAN Stat Editor settings. Changed through the in-game panel; applied at every start.',
         '# Lines: <weapon hash> <stat> <value>. Delete a line (or this file) to go back to the game\'s value.',
+        '# The first lines are the Settings page\'s choices.',
         'hotkey ' .. hotkey_name,
     }
+    local function onoff(v) return v and 'on' or 'off' end
+    for _, line in ipairs({ 'changes ' .. onoff(settings.changes), 'block_input ' .. onoff(settings.block_input),
+                            'panel_size ' .. settings.size, 'panel_side ' .. settings.side,
+                            'panel_opacity ' .. settings.opacity, 'confirm_reset ' .. onoff(settings.confirm_reset),
+                            'remember ' .. onoff(settings.remember) }) do
+        lines[#lines + 1] = line
+    end
+    if settings.remember and settings.last_tab then lines[#lines + 1] = 'last_tab ' .. settings.last_tab end
+    if settings.remember and settings.last_weapon then lines[#lines + 1] = 'last_weapon ' .. settings.last_weapon end
     for _, o in ipairs(overrides) do
         local weapon = by_hash[o.hash]
         lines[#lines + 1] = o.hash .. ' ' .. o.id .. ' ' .. number_text(o.value) ..
@@ -1901,13 +1926,26 @@ local function load_config()
         line = line:gsub('#.*$', '')
         local key = line:match('^%s*hotkey%s+(%S+)')
         if key then hotkey_name = key end
+        local name, value = line:match('^%s*([%a_]+)%s+(%S+)%s*$')
+        if name == 'changes' or name == 'block_input' or name == 'confirm_reset' or name == 'remember' then
+            settings[name] = value ~= 'off'
+        elseif (name == 'panel_size' or name == 'panel_opacity') and tonumber(value) then
+            settings.set_percent(name:sub(7), tonumber(value))
+        elseif name == 'panel_side' and (value == 'left' or value == 'right') then
+            settings.side = value
+        elseif name == 'last_tab' then
+            settings.last_tab = value
+        elseif name == 'last_weapon' and value:find('^%x+$') and #value == 16 then
+            settings.last_weapon = value:upper()
+        end
         local hash, id, value = line:match('^%s*(%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x)%s+([%w_]+)%s+([%d%.%-]+)')
         if hash and tonumber(value) then
             overrides[#overrides + 1] = { hash = hash:upper(), id = id, value = tonumber(value) }
             count = count + 1
         end
     end
-    log('config: ' .. count .. ' value(s), hotkey ' .. hotkey_name .. ' (' .. path .. ')')
+    log('config: ' .. count .. ' value(s), hotkey ' .. hotkey_name .. (settings.changes and '' or ', changes OFF') ..
+        ' (' .. path .. ')')
 end
 
 local function mark_config_dirty() config_dirty_at = api.now() + 0.75 end
@@ -1981,7 +2019,9 @@ local function become_ready(final)
     if not ok then log('attachments: not listed: ' .. tostring(why)) end
     progress = { next = 1 }
     pending, apply_at = {}, 1
-    for _, o in ipairs(overrides) do pending[#pending + 1] = { hash = o.hash, id = o.id, value = o.value } end
+    if settings.changes then
+        for _, o in ipairs(overrides) do pending[#pending + 1] = { hash = o.hash, id = o.id, value = o.value } end
+    end
     set_status('preparing', 'resolving weapons and applying saved values')
 end
 
@@ -2095,6 +2135,25 @@ local function build_input()
         'int ClipCursor(const void *rect);',
         'int GetClipCursor(void *rect);',
         'void *GetModuleHandleA(const char *name);',
+        'typedef struct { uint16_t page; uint16_t usage; uint32_t flags; void *target; } shodan_raw_device;',
+        'uint32_t GetRegisteredRawInputDevices(shodan_raw_device *devices, uint32_t *count, uint32_t size);',
+        'int RegisterRawInputDevices(const shodan_raw_device *devices, uint32_t count, uint32_t size);',
+        'uint32_t GetCurrentThreadId(void);',
+        'intptr_t GetWindowLongPtrW(void *window, int index);',
+        'intptr_t SetWindowLongPtrW(void *window, int index, intptr_t value);',
+        'void *GetProcAddress(void *module, const char *name);',
+        'void *VirtualAlloc(void *address, size_t size, uint32_t type, uint32_t protect);',
+        'int FlushInstructionCache(void *process, const void *address, size_t size);',
+        'void *GetCurrentProcess(void);',
+        'void *ShellExecuteW(void *window, const uint16_t *op, const uint16_t *file, const uint16_t *params, const uint16_t *dir, int show);',
+        'int OpenClipboard(void *owner);',
+        'int EmptyClipboard(void);',
+        'void *SetClipboardData(uint32_t format, void *data);',
+        'int CloseClipboard(void);',
+        'void *GlobalAlloc(uint32_t flags, size_t bytes);',
+        'void *GlobalLock(void *data);',
+        'int GlobalUnlock(void *data);',
+        'int MultiByteToWideChar(uint32_t page, uint32_t flags, const char *text, int bytes, uint16_t *wide, int chars);',
     }) do pcall(ffi.cdef, declaration) end
     user = ffi.load('user32')
     own_pid = ffi.load('kernel32').GetCurrentProcessId()
@@ -2106,6 +2165,40 @@ local function focused_window()
     if window == nil then return nil end
     if user.GetWindowThreadProcessId(window, ffi.cast('void *', pid)) == 0 or pid[0] ~= own_pid then return nil end
     return window
+end
+
+-- UTF-8 text as a zero-ended UTF-16 string (and its length in characters, the zero included)
+function settings.wide(text)
+    local kernel = ffi.load('kernel32')
+    local n = kernel.MultiByteToWideChar(65001, 0, text, -1, nil, 0)
+    local out = ffi.new('uint16_t[?]', math.max(1, n))
+    kernel.MultiByteToWideChar(65001, 0, text, -1, out, n)
+    return out, n
+end
+
+-- Opens a link or folder with Windows' default program (the browser, Explorer).
+function settings.open(target)
+    local ok = pcall(function()
+        ffi.load('shell32').ShellExecuteW(nil, (settings.wide('open')), (settings.wide(target)), nil, nil, 1)
+    end)
+    return ok
+end
+
+-- Puts text on the clipboard.
+function settings.copy(text)
+    local kernel = ffi.load('kernel32')
+    local wide, n = settings.wide(text)
+    local data = kernel.GlobalAlloc(0x0002, n * 2)          -- GMEM_MOVEABLE
+    if data == nil then return false end
+    local at = kernel.GlobalLock(data)
+    if at == nil then return false end
+    ffi.copy(at, wide, n * 2)
+    kernel.GlobalUnlock(data)
+    if user.OpenClipboard(nil) == 0 then return false end
+    user.EmptyClipboard()
+    local ok = user.SetClipboardData(13, data) ~= nil      -- CF_UNICODETEXT
+    user.CloseClipboard()
+    return ok
 end
 
 local VK = { Up = 0x26, Down = 0x28, Left = 0x25, Right = 0x27, PageUp = 0x21, PageDown = 0x22,
@@ -2154,6 +2247,7 @@ end
 
 -- ---------------------------------------------------------------- panel
 local sr = nil          -- the engine (stingray)
+-- page / fpage: the first row the weapon / full preset list shows (the lists scroll by rows)
 local ui = { open = false, tab = 'Primary', page = 1, row = 1, scroll = 1, weapon = nil, hover = nil,
              gui = nil, world = nil, signature = nil, regions = {}, version = 0, errors = 0,
              wslot = 1, fslot = nil, fpage = 1, message = nil,   -- chosen weapon preset / full preset, status line
@@ -2290,12 +2384,17 @@ end
 
 local function select_weapon(weapon)
     ui.weapon = weapon
-    ui.row, ui.scroll = 1, 1
+    ui.row, ui.scroll, ui.settings, ui.binding = 1, 1, false, nil
+    if weapon and settings.remember and state.phase == 'ready' and settings.last_weapon ~= weapon.hash then
+        settings.last_tab, settings.last_weapon = weapon.slot, weapon.hash
+        mark_config_dirty()
+    end
     if weapon then
         ui.tab = weapon.slot
         local list = weapons_in(ui.search.text ~= '' and '?search' or ui.tab)
         for n, w in ipairs(list) do
-            if w == weapon then ui.page = math.floor((n - 1) / LIST_ROWS) + 1 end
+            if w == weapon and n < ui.page then ui.page = n
+            elseif w == weapon and n >= ui.page + LIST_ROWS then ui.page = n - LIST_ROWS + 1 end
         end
     end
 end
@@ -2304,6 +2403,10 @@ local function change(row, delta_sign, big, exact)
     local weapon = ui.weapon
     local current = row_value(row)
     if not weapon or current == nil then return end
+    if not settings.changes then
+        ui.message = { text = 'Your changes are off: turn them on in Settings to edit.', till = api.now() + 4 }
+        return
+    end
     local target = exact or current + delta_sign * step_of(row, current, big)
     if row.storage == 'u32' then target = math.floor(target + 0.5)
     else target = math.floor(target * 10000 + 0.5) / 10000 end
@@ -2330,6 +2433,18 @@ end
 local function finish_value(keep)
     local edit = ui.value
     ui.value = nil
+    if edit and edit.setting then
+        local typed = keep and tonumber((edit.text:gsub(',', '.')))
+        if not typed then return end
+        local r = settings.RANGE[edit.setting]
+        if settings.set_percent(edit.setting, typed) then
+            ui.message = { text = string.format('%s can be %d%% to %d%%: set to %d%%.', edit.setting == 'size' and 'Panel size'
+                                                or 'Background opacity', r[1], r[2], settings[edit.setting]), till = api.now() + 4 }
+        end
+        mark_config_dirty()
+        ui.version = ui.version + 1
+        return
+    end
     local row = edit and keep and edit.weapon == ui.weapon and ui.weapon.rows[edit.n]
     local typed = row and tonumber((edit.text:gsub(',', '.')))
     if not typed then return end
@@ -2364,6 +2479,27 @@ local function reset_all()
         if d ~= nil then write_field(p.field, d) end
     end
     overrides = {}
+    mark_config_dirty()
+    ui.version = ui.version + 1
+end
+
+function settings.set_changes(on)
+    if settings.changes == on then return end
+    settings.changes = on
+    if on then
+        pending, apply_at = {}, 1
+        for _, o in ipairs(overrides) do pending[#pending + 1] = { hash = o.hash, id = o.id, value = o.value } end
+        log('settings: changes on (' .. #pending .. ' value(s) applied again)')
+    else
+        pending = {}
+        for _, o in ipairs(overrides) do
+            local weapon = by_hash[o.hash]
+            local p = weapon and weapon.by_id[o.id]
+            local d = p and default_of(p.field)
+            if d ~= nil then write_field(p.field, d) end
+        end
+        log('settings: changes off (' .. #overrides .. ' value(s) kept, the game\'s values written)')
+    end
     mark_config_dirty()
     ui.version = ui.version + 1
 end
@@ -2522,6 +2658,7 @@ do
 
     -- The weapon takes the preset's values; everything the preset does not name goes back to the game's.
     local function load_weapon_preset(weapon, n)
+        if not settings.changes then say('Your changes are off: turn them on in Settings to load a preset'); return end
         local values = weapon_preset(weapon, n)
         if not values then say(weapon.name .. ' preset ' .. n .. ' is empty'); return end
         local want = {}
@@ -2577,7 +2714,8 @@ do
     local function show(n)
         ui.fslot = n
         for k, m in ipairs(full_order()) do
-            if m == n then ui.fpage = math.floor((k - 1) / LIST_ROWS) + 1 end
+            if m == n and k < ui.fpage then ui.fpage = k
+            elseif m == n and k >= ui.fpage + LIST_ROWS then ui.fpage = k - LIST_ROWS + 1 end
         end
     end
 
@@ -2637,6 +2775,7 @@ do
     local function load_full_preset(n)
         local preset = full_presets[n]
         if not preset then return end
+        if not settings.changes then say('Your changes are off: turn them on in Settings to load a preset'); return end
         reset_all()
         local refused = 0
         for _, o in ipairs(preset.values) do
@@ -2691,8 +2830,8 @@ end
 -- top left; the gui itself counts pixels from the bottom left.
 local function draw(width, height)
     local Gui, Vector3, Vector2, Color = sr.Gui, sr.Vector3, sr.Vector2, sr.Color
-    local s = height / 1080 * 0.8   -- panel units -> 1080p units
-    local ox, oy = width - (W + 30) * s, (height - H * s) / 2
+    local s = height / 1080 * settings.size / 100   -- panel units -> 1080p units
+    local ox, oy = settings.side == 'left' and 30 * s or width - (W + 30) * s, (height - H * s) / 2
     local gui = ui.gui
     local regions = {}
     local ink_font, ink_material = font.font, font.material
@@ -2750,7 +2889,7 @@ local function draw(width, height)
     end
 
     -- frame
-    rect(0, 0, W, H, color(8, 11, 15, 232), 950)
+    rect(0, 0, W, H, color(8, 11, 15, math.floor(255 * settings.opacity / 100 + 0.5)), 950)
     outline(0, 0, W, H, GOLD)
     region('panel', 0, 0, W, H, false)
     text('SHODAN STAT EDITOR', 18, 12, 24, GOLD)
@@ -2770,16 +2909,34 @@ local function draw(width, height)
         button('tab:' .. tab, tab, 16 + (n - 1) * 104, 52, 98, 32, true, ui.tab == tab)
     end
     button('reset_weapon', 'Reset weapon', W - 16 - 96 - 8 - 124, 52, 124, 32, ui.weapon ~= nil and modified(ui.weapon))
-    button('reset_all', 'Reset all', W - 16 - 96, 52, 96, 32, #overrides > 0)
+    local sure_reset = ui.confirm and ui.confirm.kind == 'reset_all'
+    button('reset_all', sure_reset and 'Sure?' or 'Reset all', W - 16 - 96, 52, 96, 32, #overrides > 0, sure_reset)
+
+    -- a list's scroll bar (the weapon list, or the full presets): a thin track between the list and the
+    -- line that parts the panel's halves, shown when the list is longer than LIST_ROWS
+    ui.lbar, ui.split_gx = nil, ox + 343 * s
+    local function list_bar(id, total)
+        if total <= LIST_ROWS then return end
+        local top, len, span = 96, LIST_ROWS * 26 - 1, total - LIST_ROWS
+        local th = math.max(24, len * LIST_ROWS / total)
+        local ty = top + (len - th) * math.min(1, (ui[id] - 1) / span)
+        rect(336, top, 5, len, color(28, 34, 42), 951)
+        local hot = (ui.drag and ui.drag.bar == 'lbar') or ui.hover == 'lbar:thumb'
+        rect(336, ty, 5, th, hot and GOLD or color(110, 124, 138), 952)
+        region('lbar:track', 335, top, 8, len)
+        region('lbar:thumb', 335, ty, 8, th)
+        ui.lbar = { id = id, top = height - oy - top * s, bottom = height - oy - (top + len) * s,
+                    thumb_top = height - oy - ty * s, thumb = th * s, span = span, page = LIST_ROWS }
+    end
 
     local presets_tab = ui.tab == 'Presets'
     if presets_tab then
         -- full presets: the list holds them by name, the right side the chosen one
         local order, chosen = presets.full_order(), presets.chosen()
-        local pages = math.max(1, math.ceil(#order / LIST_ROWS))
-        ui.fpage = math.max(1, math.min(ui.fpage, pages))
+        local last_top = math.max(1, #order - LIST_ROWS + 1)
+        ui.fpage = math.max(1, math.min(ui.fpage, last_top))
         for k = 1, LIST_ROWS do
-            local n = order[(ui.fpage - 1) * LIST_ROWS + k]
+            local n = order[ui.fpage + k - 1]
             if not n then break end
             local y, key, preset = 96 + (k - 1) * 26, 'fslot:' .. n, presets.full[n]
             if n == chosen then rect(16, y, 318, 25, color(90, 74, 8), 951)
@@ -2791,13 +2948,17 @@ local function draw(width, height)
         if #order == 0 then text('No presets yet.', 24, 100, 16, MUTED) end
         local py = 96 + LIST_ROWS * 26 + 8
         button('fpage:prev', '<', 16, py, 40, 30, ui.fpage > 1)
-        text('page ' .. ui.fpage .. ' of ' .. pages .. '   ' .. #order .. ' of ' .. presets.full_count, 70, py + 7, 16, MUTED, 214)
-        button('fpage:next', '>', 294, py, 40, 30, ui.fpage < pages)
+        text((#order > LIST_ROWS and (ui.fpage .. '-' .. math.min(#order, ui.fpage + LIST_ROWS - 1) .. ' of ') or '') ..
+             #order .. ' (max ' .. presets.full_count .. ')', 70, py + 7, 16, MUTED, 214)
+        button('fpage:next', '>', 294, py, 40, 30, ui.fpage < last_top)
+        list_bar('fpage', #order)
         button('fpreset:new', '+ New preset from current changes', 16, py + 40, 318, 30, #order < presets.full_count)
         rect(343, 96, 2, H - 96 - 70, color(70, 82, 94), 951)
 
         local x0, preset = 356, chosen and presets.full[chosen]
-        if not preset then
+        if ui.settings then
+            -- the Settings page, drawn below
+        elseif not preset then
             text('Presets', x0, 94, 22, GOLD)
             text('A preset keeps every change you have made as one set, under a name you choose.', x0, 136, 16, WHITE, W - x0 - 20)
             text('"+ New preset" (or Insert) saves your current changes as one; you name it next.', x0, 162, 16, MUTED, W - x0 - 20)
@@ -2851,10 +3012,10 @@ local function draw(width, height)
     -- weapon list
     local searching = ui.search.text ~= '' or ui.search.active
     local list = presets_tab and {} or weapons_in(ui.search.text ~= '' and '?search' or ui.tab)
-    local pages = math.max(1, math.ceil(#list / LIST_ROWS))
-    if ui.page > pages then ui.page = pages end
+    local last_top = math.max(1, #list - LIST_ROWS + 1)
+    ui.page = math.max(1, math.min(ui.page, last_top))
     for k = 1, LIST_ROWS do
-        local weapon = list[(ui.page - 1) * LIST_ROWS + k]
+        local weapon = list[ui.page + k - 1]
         if not weapon then break end
         local y = 96 + (k - 1) * 26
         local key = 'weapon:' .. weapon.hash
@@ -2870,9 +3031,11 @@ local function draw(width, height)
     if not presets_tab then
         if ui.search.text ~= '' and #list == 0 then text('Nothing matches.', 24, 100, 16, MUTED) end
         button('page:prev', '<', 16, py, 40, 30, ui.page > 1)
-        text('page ' .. ui.page .. ' of ' .. pages .. (ui.search.text ~= '' and ('   ' .. #list .. ' found') or ''),
+        list_bar('page', #list)
+        text((#list > LIST_ROWS and (ui.page .. '-' .. math.min(#list, ui.page + LIST_ROWS - 1) .. ' of ') or '') ..
+             #list .. (ui.search.text ~= '' and ' found' or ' listed'),
              70, py + 7, 16, MUTED, 214)
-        button('page:next', '>', 294, py, 40, 30, ui.page < pages)
+        button('page:next', '>', 294, py, 40, 30, ui.page < last_top)
         -- search box: click it (or Ctrl+F) and type; the list shows what matches, from every tab
         local sy, active = py + 40, ui.search.active
         rect(16, sy, 274, 30, active and color(20, 26, 34) or color(28, 34, 42), 951)
@@ -2890,7 +3053,64 @@ local function draw(width, height)
     -- stats of the selected weapon
     local weapon = ui.weapon
     local x0 = 356
-    if presets_tab then
+    if ui.settings then
+        text('Settings', x0, 94, 22, GOLD)
+        local y = 132
+        local function choice(label, key, options, current)
+            text(label, x0, y + 6, 16, WHITE, 270)
+            for k, o in ipairs(options) do
+                button('set:' .. key .. ':' .. tostring(o[1]), o[2], 640 + (k - 1) * 64, y, 60, 28, true, o[1] == current)
+            end
+            y = y + 36
+        end
+        local ONOFF = { { 'on', 'On' }, { 'off', 'Off' } }
+        local function onoff(v) return v and 'on' or 'off' end
+        text('Open / close key', x0, y + 6, 16, WHITE, 270)
+        button('set:bind', ui.binding and 'Press a key (Esc cancels)' or hotkey_name, 640, y, ui.binding and 316 or 124, 28, true, ui.binding)
+        y = y + 36
+        choice('Block game input while open', 'block_input', ONOFF, onoff(settings.block_input))
+        choice('Apply my changes', 'changes', ONOFF, onoff(settings.changes))
+        text(settings.changes and ('On: your ' .. #overrides .. ' change(s) are applied.')
+             or ('Off: the game\'s values everywhere; your ' .. #overrides .. ' change(s) are kept for when you turn them on.'),
+             x0 + 16, y - 6, 14, settings.changes and MUTED or WARN, W - x0 - 40)
+        y = y + 14
+        local function percent(label, key)
+            text(label, x0, y + 6, 16, WHITE, 270)
+            local r = settings.RANGE[key]
+            button('set:' .. key .. ':down', '<', 640, y, 36, 28, settings[key] > r[1])
+            local typing = ui.value and ui.value.setting == key
+            if typing or ui.hover == 'value:' .. key then
+                rect(680, y, 80, 28, typing and color(20, 26, 34) or color(40, 52, 64), 951)
+                outline(680, y, 80, 28, GOLD)
+            end
+            text(typing and (ui.value.text .. '_') or (settings[key] .. '%'), 754, y + 6, 17, WHITE, 70, true)
+            region('value:' .. key, 680, y, 80, 28)
+            button('set:' .. key .. ':up', '>', 764, y, 36, 28, settings[key] < r[2])
+            y = y + 36
+        end
+        percent('Panel size', 'size')
+        choice('Panel side', 'side', { { 'left', 'Left' }, { 'right', 'Right' } }, settings.side)
+        percent('Background opacity', 'opacity')
+        choice('Ask before Reset all', 'confirm_reset', ONOFF, onoff(settings.confirm_reset))
+        choice('Remember last tab and weapon', 'remember', ONOFF, onoff(settings.remember))
+        y = y + 16
+        rect(x0, y, W - x0 - 16, 1, color(70, 82, 94), 951)
+        y = y + 14
+        text(MOD.title .. ' v' .. MOD.version, x0, y, 18, GOLD)
+        text('Made by SHODAN', x0, y + 30, 16, WHITE)
+        text('Bingus Shared Loader by CowboyBingus', x0, y + 54, 16, MUTED)
+        y = y + 92
+        text('GitHub', x0, y + 6, 16, WHITE)
+        text(settings.GITHUB:gsub('^https://', ''), x0 + 90, y + 7, 15, MUTED, 380)
+        button('link:github_open', 'Open', 800, y, 88, 28, true)
+        button('link:github_copy', 'Copy', 896, y, 88, 28, true)
+        y = y + 36
+        local log_dir = (data_dir('Logs') or ''):gsub('/', '\\')
+        text('Log file', x0, y + 6, 16, WHITE)
+        button('link:log_copy', 'Copy', 800, y, 88, 28, true)
+        button('link:log_open', 'Folder', 896, y, 88, 28, true)
+        text(log_dir .. '\\' .. MOD.log, x0, y + 36, 14, MUTED, W - x0 - 16)
+    elseif presets_tab then
         -- drawn above
     elseif not weapon then
         text('Choose a weapon on the left.', x0, 100, 18, MUTED)
@@ -2984,11 +3204,11 @@ local function draw(width, height)
             local th = math.max(24, math.min(len, len * shown / total))
             local ty = top + (len - th) * math.min(1, (ui.scroll - 1) / span)
             rect(989, top, 5, len, color(28, 34, 42), 951)
-            local hot = ui.drag or ui.hover == 'sbar:thumb'
+            local hot = (ui.drag and ui.drag.bar == 'sbar') or ui.hover == 'sbar:thumb'
             rect(989, ty, 5, th, hot and GOLD or color(110, 124, 138), 952)
             region('sbar:track', 986, top, 12, len)
             region('sbar:thumb', 986, ty, 12, th)
-            ui.sbar = { top = height - oy - top * s, bottom = height - oy - (top + len) * s,
+            ui.sbar = { id = 'scroll', top = height - oy - top * s, bottom = height - oy - (top + len) * s,
                         thumb_top = height - oy - ty * s, thumb = th * s, span = span }
             text(string.format('rows %d-%d of %d', ui.scroll, ui.last_visible, #weapon.rows), x0, bottom + 12, 15, MUTED)
             button('scroll:up', 'Up', 790, bottom + 6, 80, 26, ui.scroll > 1)
@@ -2996,32 +3216,41 @@ local function draw(width, height)
         end
     end
 
-    -- footer
+    -- footer, and the Settings button at the bottom right
     rect(16, H - 64, W - 32, 1, color(70, 82, 94), 951)
-    if ui.editing then
+    button('settings', ui.settings and 'Back' or 'Settings', W - 16 - 104, H - 54, 104, 34, true, ui.settings)
+    if ui.binding then
+        text('Press the key that should open and close the panel: F1-F12, Insert, Home, End, Pause or Scroll Lock. Esc cancels.',
+             18, H - 56, 14, MUTED, W - 150)
+    elseif ui.settings then
+        text('Settings are saved at once, in config.txt with your changes.', 18, H - 56, 14, MUTED, W - 150)
+    elseif ui.editing then
         text('Type the name: Enter keeps it, Esc cancels. The game sees these keys too, so name presets from a menu.',
-             18, H - 56, 14, MUTED, W - 36)
+             18, H - 56, 14, MUTED, W - 150)
+    elseif ui.value and ui.value.setting then
+        local r = settings.RANGE[ui.value.setting]
+        text(string.format('Type the percent (%d-%d): Enter sets it, Esc cancels.', r[1], r[2]), 18, H - 56, 14, MUTED, W - 150)
     elseif ui.value then
         text('Type the value: Enter sets it, Esc cancels. Values out of range are set to the nearest allowed one.',
-             18, H - 56, 14, MUTED, W - 36)
+             18, H - 56, 14, MUTED, W - 150)
     elseif ui.search.active and not presets_tab then
         text('Type to search: Enter keeps the results, Esc clears the search. The game sees these keys too.',
-             18, H - 56, 14, MUTED, W - 36)
+             18, H - 56, 14, MUTED, W - 150)
     elseif presets_tab then
         text('Up/Down choose, Enter loads, Insert makes a new one, Shift+Insert saves into it, F2 renames, Del deletes.',
-             18, H - 56, 14, MUTED, W - 36)
+             18, H - 56, 14, MUTED, W - 150)
     else
         text('Up/Down choose a stat, Left/Right change it (Shift: bigger steps), click a value or press Enter to type it,',
-             18, H - 56, 14, MUTED, W - 36)
+             18, H - 56, 14, MUTED, W - 150)
     end
     if ui.message then
-        text(ui.message.text, 18, H - 34, 14, GOOD, W - 36)
+        text(ui.message.text, 18, H - 34, 14, GOOD, W - 150)
     elseif presets_tab then
         text('Overwriting and deleting ask twice. Changes apply at once and are saved; ' .. #overrides ..
-             ' value(s) changed.', 18, H - 34, 14, MUTED, W - 36)
+             ' value(s) changed.', 18, H - 34, 14, MUTED, W - 150)
     else
         text('PgUp/PgDn change weapon, Del resets, Ctrl+1-5 loads a weapon preset, Ctrl+Shift+1-5 saves one; ' .. #overrides ..
-             ' value(s) changed.', 18, H - 34, 14, MUTED, W - 36)
+             ' value(s) changed.', 18, H - 34, 14, MUTED, W - 150)
     end
     return regions
 end
@@ -3045,13 +3274,47 @@ local function click(key)
     if ui.editing and kind ~= 'name' then presets.finish_rename(true) end
     if ui.search.active and kind ~= 'search' then ui.search.active = false end
     if ui.value and key ~= 'value:' .. ui.value.n then finish_value(true) end
-    if kind == 'tab' then ui.tab, ui.page, ui.search = arg, 1, { text = '', active = false }
+    if kind ~= 'set' then ui.binding = nil end
+    if kind == 'tab' then
+        ui.tab, ui.page, ui.search, ui.settings = arg, 1, { text = '', active = false }, false
+        if settings.remember and state.phase == 'ready' and settings.last_tab ~= arg then
+            settings.last_tab = arg
+            mark_config_dirty()
+        end
+    elseif kind == 'settings' then ui.settings = not ui.settings
+    elseif kind == 'value' and (arg == 'size' or arg == 'opacity') then
+        if not ui.value then ui.value = { n = arg, setting = arg, text = tostring(settings[arg]), fresh = true } end
+    elseif kind == 'set' then
+        local name, value = arg:match('^([%w_]+):?(.*)$')
+        if name == 'bind' then ui.binding = not ui.binding or nil
+        elseif name == 'changes' then settings.set_changes(value == 'on')
+        elseif name == 'block_input' or name == 'confirm_reset' or name == 'remember' then settings[name] = value == 'on'
+        elseif (name == 'size' or name == 'opacity') and (value == 'up' or value == 'down') then
+            local v = settings[name]
+            settings.set_percent(name, value == 'up' and math.floor(v / 5) * 5 + 5 or math.ceil(v / 5) * 5 - 5)
+        elseif name == 'size' or name == 'opacity' then settings.set_percent(name, tonumber(value) or settings[name])
+        elseif name == 'side' then settings.side = value end
+        if name ~= 'bind' then mark_config_dirty(); ui.version = ui.version + 1 end
+    elseif kind == 'link' then
+        local log_file = (data_dir('Logs') or '') .. '/' .. MOD.log
+        local done
+        if arg == 'github_open' then done = settings.open(settings.GITHUB) and 'Opened the GitHub page in your browser.'
+        elseif arg == 'github_copy' then done = settings.copy(settings.GITHUB) and 'GitHub link copied.'
+        elseif arg == 'log_copy' then done = settings.copy((log_file:gsub('/', '\\'))) and 'Log file path copied.'
+        elseif arg == 'log_open' then done = settings.open((data_dir('Logs') or ''):gsub('/', '\\')) and 'Opened the log folder.' end
+        ui.message = { text = done or 'That did not work; see the log.', till = api.now() + 4 }
     elseif kind == 'search' then
         if arg == 'clear' then ui.search, ui.page = { text = '', active = false }, 1
         else ui.search.active = true end
     elseif kind == 'weapon' then select_weapon(by_hash[arg])
-    elseif kind == 'page' then ui.page = ui.page + (arg == 'next' and 1 or -1)
-    elseif kind == 'reset_all' then reset_all()
+    elseif kind == 'page' then ui.page = math.max(1, ui.page + (arg == 'next' and LIST_ROWS or -LIST_ROWS))
+    elseif kind == 'reset_all' then
+        if settings.confirm_reset and not (ui.confirm and ui.confirm.kind == 'reset_all') then
+            ui.confirm = { kind = 'reset_all', till = api.now() + 3 }
+        else
+            ui.confirm = nil
+            reset_all()
+        end
     elseif kind == 'reset_weapon' and weapon then reset_weapon(weapon)
     elseif kind == 'wslot' then ui.wslot = tonumber(arg) or 1
     elseif kind == 'wpreset' and weapon then
@@ -3059,7 +3322,7 @@ local function click(key)
         elseif arg == 'load' then presets.load_weapon_preset(weapon, ui.wslot)
         elseif arg == 'clear' then presets.clear_weapon_preset(weapon, ui.wslot) end
     elseif kind == 'fslot' then ui.fslot = tonumber(arg)
-    elseif kind == 'fpage' then ui.fpage = ui.fpage + (arg == 'next' and 1 or -1)
+    elseif kind == 'fpage' then ui.fpage = math.max(1, ui.fpage + (arg == 'next' and LIST_ROWS or -LIST_ROWS))
     elseif kind == 'name' then presets.finish_rename(arg == 'ok')
     elseif kind == 'fpreset' then
         local n = presets.chosen()
@@ -3098,6 +3361,20 @@ end
 
 local function keyboard(now)
     local weapon = ui.weapon
+    if ui.binding then
+        if pressed('Escape', now) then ui.binding = nil; return end
+        for _, name in ipairs({ 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12',
+                                'Insert', 'Home', 'End', 'Pause', 'ScrollLock' }) do
+            if pressed(name, now) then
+                hotkey_name, ui.binding, ui.hotkey_hold = name, nil, true
+                mark_config_dirty()
+                ui.message = { text = 'The panel now opens and closes with ' .. name .. '.', till = now + 4 }
+                log('settings: hotkey ' .. name)
+                return
+            end
+        end
+        return
+    end
     if ui.editing then
         if pressed('Escape', now) then presets.finish_rename(false); return end
         if pressed('Enter', now) then presets.finish_rename(true); return end
@@ -3146,6 +3423,10 @@ local function keyboard(now)
     end
     if ui.tab ~= 'Presets' and key_down(VK.Ctrl) and pressed('T70', now) then     -- Ctrl+F
         ui.search.active = true
+        return
+    end
+    if ui.settings then
+        if pressed('Escape', now) then ui.settings = false end
         return
     end
     if pressed('PageDown', now) or pressed('PageUp', now) then
@@ -3205,20 +3486,34 @@ local function keyboard(now)
     if pressed('Delete', now) then reset_row(weapon, row) end
 end
 
--- The stats' scroll bar (ui.sbar, set while the rows scroll: track and thumb in gui pixels from the
--- bottom): pressing the thumb grabs it and dragging moves the rows along; pressing the track pages.
+-- the cursor and the game's input while the panel is open (see cursor, below)
+local cursor = { taken = false }
+
+-- The scroll bars: the stats' (ui.sbar, set while the rows scroll) and the list's (ui.lbar, set while
+-- the weapon or preset list is longer than a page); track and thumb in gui pixels from the bottom,
+-- `id` the ui field they move. Pressing the thumb grabs it and dragging moves the rows along;
+-- pressing the track pages; the wheel (panel_frame) moves the bar of the half the cursor is over.
 function ui.scroll_press(key, gy)
-    local b = ui.sbar
+    local name = key:sub(1, 1) == 'l' and 'lbar' or 'sbar'
+    local b = ui[name]
     if not b then return end
-    if key == 'sbar:thumb' then ui.drag = { from = gy, scroll = ui.scroll }
-    else click(gy > b.thumb_top and 'scroll:up' or 'scroll:down') end
+    if key:find(':thumb$') then ui.drag = { bar = name, from = gy, value = ui[b.id] }
+    elseif name == 'sbar' then click(gy > b.thumb_top and 'scroll:up' or 'scroll:down')
+    else ui[b.id] = math.max(1, math.min(b.span + 1, ui[b.id] + (gy > b.thumb_top and -b.page or b.page))) end
 end
 
 function ui.scroll_drag(gy)
-    local b, d = ui.sbar, ui.drag
-    local per = b and d and (b.top - b.bottom - b.thumb) / b.span
+    local d = ui.drag
+    local b = d and ui[d.bar]
+    local per = b and (b.top - b.bottom - b.thumb) / b.span
     if not per or per <= 0 then return end
-    ui.scroll = math.max(1, math.min(b.span + 1, d.scroll + math.floor((d.from - gy) / per + 0.5)))
+    ui[b.id] = math.max(1, math.min(b.span + 1, d.value + math.floor((d.from - gy) / per + 0.5)))
+end
+
+function ui.wheel_scroll(notches)
+    local left = ui.cursor_gx and ui.split_gx and ui.cursor_gx < ui.split_gx
+    local b = left and ui.lbar or (not left and ui.weapon and ui.sbar)
+    if b then ui[b.id] = math.max(1, math.min(b.span + 1, ui[b.id] - notches * 3)) end
 end
 
 local mouse_was_down, armed = nil, nil
@@ -3233,13 +3528,19 @@ local function mouse(window)
     if cw <= 0 or ch <= 0 or x < 0 or y < 0 or x >= cw or y >= ch then return end
     local width, height = sr.Gui.resolution()
     local gy = (ch - y) * height / ch
-    ui.hover = hit(x * width / cw, gy, true)
-    local value = sr.Mouse.button(sr.Mouse.button_id('left'))
-    local down = value == true or (type(value) == 'number' and value > 0)
+    ui.cursor_gx = x * width / cw
+    ui.hover = hit(ui.cursor_gx, gy, true)
+    local down
+    if cursor.raw.saved then
+        down = key_down(0x01)   -- VK_LBUTTON: the engine gets no mouse input while the panel holds it
+    else
+        local value = sr.Mouse.button(sr.Mouse.button_id('left'))
+        down = value == true or (type(value) == 'number' and value > 0)
+    end
     if mouse_was_down ~= nil then
         if down and not mouse_was_down then
             armed = ui.hover
-            if armed == 'sbar:thumb' or armed == 'sbar:track' then ui.scroll_press(armed, gy) end
+            if armed and armed:find('^[sl]bar:') then ui.scroll_press(armed, gy) end
         end
         if down and ui.drag then ui.scroll_drag(gy) end
         if not down then ui.drag = nil end
@@ -3256,7 +3557,6 @@ end
 -- the engine's Window functions where it has them, else through Windows (ShowCursor and
 -- ClipCursor). Everything is put back as it was when the panel closes. The game may hide the
 -- cursor again on its own (screen changes), so it is shown again each frame while open.
-local cursor = { taken = false }
 
 local function window_fn(name)
     local f = sr.Window and rawget(sr.Window, name)
@@ -3323,6 +3623,202 @@ local function release_cursor()
     if cursor.clipped and cursor.clip then user.ClipCursor(ffi.cast('const void *', cursor.clip)) end
 end
 
+-- Game input: while the panel is open the game gets no keyboard or mouse input, so typing and
+-- the mouse move neither the character nor the camera and open none of the game's menus. The
+-- engine reads both through Windows raw input: the panel takes the game's keyboard (page 1 usage 6)
+-- and mouse (1/2) registrations away, keeping them, and registers them again exactly as they were
+-- when it closes. The panel reads key and button states itself (GetAsyncKeyState), which raw input
+-- does not touch. Taken once the hotkey is let go (so the game never misses a key's release), checked
+-- twice a second while open (the game may register again), given back until Windows accepts it.
+cursor.raw = { saved = nil, next_check = 0, retakes = 0 }
+
+function cursor.registered()
+    local count = ffi.new('uint32_t[1]')
+    user.GetRegisteredRawInputDevices(nil, count, 16)
+    if count[0] == 0 then return {} end
+    local list = ffi.new('shodan_raw_device[?]', count[0])
+    local got = user.GetRegisteredRawInputDevices(list, count, 16)
+    local out = {}
+    if got == 0xFFFFFFFF then return out end
+    for k = 0, got - 1 do
+        local d = list[k]
+        out[#out + 1] = { page = d.page, usage = d.usage, flags = d.flags, target = d.target }
+    end
+    return out
+end
+
+function cursor.take_input(window, now)
+    local raw = cursor.raw
+    if raw.saved or raw.failed or now < raw.next_check then return end
+    raw.next_check = now + 0.5
+    local devices, game = cursor.registered(), {}
+    for _, d in ipairs(devices) do
+        if d.page == 1 and (d.usage == 2 or d.usage == 6) then game[#game + 1] = d end
+    end
+    if not raw.logged then
+        raw.logged = true
+        local text = {}
+        for _, d in ipairs(devices) do
+            text[#text + 1] = string.format('%d/%d flags 0x%X %s', d.page, d.usage, d.flags,
+                                            d.target == nil and 'focus' or (d.target == window and 'game window' or 'other window'))
+        end
+        local thread = user.GetWindowThreadProcessId(window, nil)
+        log('input: raw input registered: ' .. (#text > 0 and table.concat(text, ', ') or 'none') ..
+            '; window thread ' .. tostring(thread) .. ', this thread ' .. tostring(ffi.load('kernel32').GetCurrentThreadId()))
+    end
+    if not raw.keys_on then raw.keys_on = true; cursor.block_keys(window, true) end
+    if #game == 0 then
+        if not raw.none then raw.none = true; log('input: the game has no raw keyboard / mouse registration now') end
+        return
+    end
+    local list = ffi.new('shodan_raw_device[?]', #game)
+    for k, d in ipairs(game) do
+        list[k - 1].page, list[k - 1].usage, list[k - 1].flags, list[k - 1].target = d.page, d.usage, 0x1, nil   -- RIDEV_REMOVE
+    end
+    if user.RegisterRawInputDevices(list, #game, 16) ~= 0 then
+        raw.saved, raw.window = game, window
+        raw.taken = (raw.taken or 0) + 1
+        if raw.taken <= 3 then log('input: taken from the game (' .. #game .. ' device(s))'); flush_log() end
+    else
+        raw.failed = true
+        log('input: could not take it from the game (error ' .. tostring(ffi.errno()) .. '); the game keeps it')
+        flush_log()
+    end
+end
+
+function cursor.give_input(now)
+    local raw = cursor.raw
+    raw.failed = nil
+    if raw.keys_on then raw.keys_on = false; pcall(cursor.block_keys, nil, false) end
+    if not raw.saved then return true end
+    if now and now < (raw.next_give or 0) then return false end
+    local list = ffi.new('shodan_raw_device[?]', #raw.saved)
+    for k, d in ipairs(raw.saved) do
+        list[k - 1].page, list[k - 1].usage, list[k - 1].flags, list[k - 1].target = d.page, d.usage, d.flags, d.target
+    end
+    if user.RegisterRawInputDevices(list, #raw.saved, 16) ~= 0 then
+        raw.saved, raw.next_check = nil, 0
+        if raw.taken <= 3 then log('input: given back to the game'); flush_log() end
+        return true
+    end
+    raw.next_give = (now or 0) + 0.25
+    raw.give_errors = (raw.give_errors or 0) + 1
+    if raw.give_errors <= 3 then log('input: could not give it back yet (error ' .. tostring(ffi.errno()) .. '); trying again') end
+    return false
+end
+
+-- The keyboard reaches the game as window messages, not raw input. A small native filter goes in
+-- front of the game window's procedure (installed once, never removed: other mods may chain after
+-- it): while its flag is set it drops key presses and typed characters (WM_KEYDOWN, WM_CHAR,
+-- WM_DEADCHAR, WM_UNICHAR) and passes everything else, key releases included (no key can stick), to
+-- the window's own procedure. It runs on the window's thread without Lua. While set it also keeps the
+-- mouse wheel (WM_MOUSEWHEEL: its turns added up for the panel's scrolling). Each install gets its own
+-- block: +0 flag, +4 key presses seen, +8 blocked, +12 wheel turns (120 a notch), +16 previous
+-- procedure, +24 CallWindowProcW, code at +64.
+cursor.keys = { blocks = {} }
+
+function cursor.key_filter(window)
+    local keys = cursor.keys
+    local current = user.GetWindowLongPtrW(window, -4)   -- GWLP_WNDPROC
+    for _, b in ipairs(keys.blocks) do
+        if b.window == window and current == b.code then return b end
+    end
+    local kernel = ffi.load('kernel32')
+    local call = kernel.GetProcAddress(kernel.GetModuleHandleA('user32.dll'), 'CallWindowProcW')
+    local block = kernel.VirtualAlloc(nil, 4096, 0x3000, 0x40)   -- commit + reserve, execute / read / write
+    if call == nil or block == nil or current == 0 then return nil end
+    local base = ffi.cast('uint8_t *', block)
+    local data = ffi.cast('uint64_t *', block)
+    data[2], data[3] = ffi.cast('uint64_t', current), ffi.cast('uint64_t', ffi.cast('intptr_t', call))
+    local a = tonumber(ffi.cast('uintptr_t', block))
+    local code = { 0x49, 0xBA }                              -- mov r10, block
+    for k = 0, 7 do code[#code + 1] = math.floor(a / 256 ^ k) % 256 end
+    for _, byte in ipairs({
+        0x81, 0xFA, 0x00, 0x01, 0x00, 0x00, 0x75, 0x04,      -- cmp edx, WM_KEYDOWN; jne +4
+        0x41, 0xFF, 0x42, 0x04,                              -- inc dword [r10+4]   (key presses seen)
+        0x41, 0x83, 0x3A, 0x00, 0x74, 0x3E,                  -- cmp dword [r10], 0; je pass
+        0x81, 0xFA, 0x0A, 0x02, 0x00, 0x00, 0x75, 0x0D,      -- cmp edx, WM_MOUSEWHEEL; jne +13
+        0x44, 0x89, 0xC0, 0xC1, 0xF8, 0x10,                  -- eax = wheel delta (high word of w, signed)
+        0x41, 0x01, 0x42, 0x0C, 0x31, 0xC0, 0xC3,            -- add [r10+12], eax; return 0
+        0x81, 0xFA, 0x00, 0x01, 0x00, 0x00, 0x74, 0x1A,      -- WM_KEYDOWN -> block
+        0x81, 0xFA, 0x02, 0x01, 0x00, 0x00, 0x74, 0x12,      -- WM_CHAR
+        0x81, 0xFA, 0x03, 0x01, 0x00, 0x00, 0x74, 0x0A,      -- WM_DEADCHAR
+        0x81, 0xFA, 0x09, 0x01, 0x00, 0x00, 0x74, 0x02,      -- WM_UNICHAR
+        0xEB, 0x07,                                          -- jmp pass
+        0x41, 0xFF, 0x42, 0x08, 0x31, 0xC0, 0xC3,            -- block: inc dword [r10+8]; return 0
+        0x48, 0x83, 0xEC, 0x38,                              -- pass: CallWindowProcW(previous, window, msg, w, l)
+        0x4C, 0x89, 0x4C, 0x24, 0x20, 0x4D, 0x89, 0xC1, 0x41, 0x89, 0xD0, 0x48, 0x89, 0xCA,
+        0x49, 0x8B, 0x4A, 0x10, 0x41, 0xFF, 0x52, 0x18,
+        0x48, 0x83, 0xC4, 0x38, 0xC3,
+    }) do code[#code + 1] = byte end
+    for k, byte in ipairs(code) do base[63 + k] = byte end
+    kernel.FlushInstructionCache(kernel.GetCurrentProcess(), base + 64, #code)
+    local entry = ffi.cast('intptr_t', base + 64)
+    local previous = user.SetWindowLongPtrW(window, -4, entry)
+    if previous == 0 then return nil end
+    if previous ~= current then data[2] = ffi.cast('uint64_t', previous) end
+    local b = { window = window, code = entry, flag = ffi.cast('uint32_t *', block) }
+    keys.blocks[#keys.blocks + 1] = b
+    log('input: key filter in front of the game window (' .. #keys.blocks .. ')')
+    return b
+end
+
+function cursor.block_keys(window, on)
+    local keys = cursor.keys
+    if on then
+        local ok, b = pcall(cursor.key_filter, window)
+        if not ok or not b then
+            if not keys.failed then keys.failed = true; log('input: no key filter: ' .. tostring(ok and 'not installed' or b)) end
+            return
+        end
+    end
+    local seen, blocked = 0, 0
+    for _, b in ipairs(keys.blocks) do
+        b.flag[0] = on and 1 or 0
+        seen, blocked = seen + b.flag[1], blocked + b.flag[2]
+    end
+    if not on and #keys.blocks > 0 then
+        keys.reports = (keys.reports or 0) + 1
+        if keys.reports <= 3 then log('input: key presses the game window got: ' .. seen .. ', blocked while open: ' .. blocked) end
+    end
+    if not keys.modules then
+        keys.modules = true
+        local kernel, found = ffi.load('kernel32'), {}
+        for _, m in ipairs({ 'dinput8.dll', 'dinput.dll', 'GameInput.dll', 'xinput1_4.dll', 'xinput9_1_0.dll', 'hid.dll' }) do
+            if kernel.GetModuleHandleA(m) ~= nil then found[#found + 1] = m end
+        end
+        log('input: input libraries loaded: ' .. (#found > 0 and table.concat(found, ', ') or 'none of dinput / GameInput / xinput / hid'))
+    end
+end
+
+-- Wheel notches turned since the last call (up: positive), from the key filter's running total.
+function cursor.wheel()
+    local keys, total = cursor.keys, 0
+    for _, b in ipairs(keys.blocks) do total = total + ffi.cast('int32_t *', b.flag)[3] end
+    local turned = total - (keys.wheel_seen or total)
+    keys.wheel_seen = total
+    keys.wheel_rest = (keys.wheel_rest or 0) + turned
+    local notches = keys.wheel_rest >= 0 and math.floor(keys.wheel_rest / 120) or -math.floor(-keys.wheel_rest / 120)
+    keys.wheel_rest = keys.wheel_rest - notches * 120
+    return notches
+end
+
+-- while open: the game may have registered again (focus changes); take it again
+function cursor.hold_input(window, now)
+    local raw = cursor.raw
+    if not raw.saved then return cursor.take_input(window, now) end
+    if now < raw.next_check then return end
+    raw.next_check = now + 0.5
+    for _, d in ipairs(cursor.registered()) do
+        if d.page == 1 and (d.usage == 2 or d.usage == 6) then
+            raw.retakes = raw.retakes + 1
+            if raw.retakes <= 3 then log('input: the game registered again; taking it again') end
+            raw.saved, raw.next_check = nil, 0
+            return cursor.take_input(window, now)
+        end
+    end
+end
+
 -- The engine's worlds come and go with screens and cinematics (the intro runs with 8). The
 -- panel draws only once the set of worlds has stayed the same for SETTLE_SECONDS, and is
 -- taken down the moment it changes.
@@ -3337,6 +3833,15 @@ end
 local function panel_frame(now)
     local window = focused_window()
     pcall(keep_cursor)
+    if not settings.block_input then
+        if cursor.raw.saved or cursor.raw.keys_on then pcall(cursor.give_input) end
+    elseif window and not key_down(VK[hotkey_name] or VK.F8) then
+        local ok, why = pcall(cursor.hold_input, window, now)
+        if not ok then log('input: ' .. tostring(why)); cursor.raw.failed = true end
+    end
+    -- the mouse wheel scrolls the list or the stats (the half the cursor is over), 3 rows a notch
+    local ok, notches = pcall(cursor.wheel)
+    if ok and notches ~= 0 and not ui.value then ui.wheel_scroll(notches) end
     local main = sr.Application.main_world()
     local worlds = sr.Application.worlds() or {}
     if not same_worlds(worlds, ui.worlds) or main ~= ui.main then
@@ -3386,6 +3891,7 @@ local function panel_frame(now)
     if ui.confirm and api.now() >= ui.confirm.till then ui.confirm = nil; ui.version = ui.version + 1 end
     local signature = table.concat({ width, height, state.phase, state.tables, ui.tab, ui.page, ui.row, ui.scroll,
                                      tostring(ui.hover), tostring(ui.drag ~= nil), ui.weapon and ui.weapon.hash or '-', ui.version,
+                                     tostring(ui.settings), tostring(ui.binding), hotkey_name,
                                      #overrides, ui.wslot, tostring(ui.fslot), ui.fpage,
                                      ui.message and ui.message.text or '', ui.editing and ui.editing.text or '-',
                                      ui.search.text, tostring(ui.search.active),
@@ -3425,6 +3931,15 @@ local function open_panel(open)
     ui.open = open
     if open then
         if state.phase == 'ready' and not tables_intact() then rescan() end
+        if not ui.restored and state.phase == 'ready' then
+            ui.restored = true
+            local last = settings.remember and settings.last_weapon and by_hash[settings.last_weapon]
+            if last and #last.rows > 0 then
+                select_weapon(last)
+            elseif settings.remember and settings.last_tab then
+                for _, t in ipairs(TABS) do if t == settings.last_tab then ui.tab = t end end
+            end
+        end
         if not ui.weapon then
             local list = weapons_in(ui.tab)
             select_weapon(list[1])
@@ -3434,12 +3949,14 @@ local function open_panel(open)
         flush_log()
         local ok, why = pcall(take_cursor)
         if not ok then log('cursor: could not free it: ' .. tostring(why)) end
+        cursor.raw.next_check = 0   -- the game's input: taken as soon as the hotkey is up
     else
         pcall(release_cursor)
+        pcall(cursor.give_input)
         clear_gui()
         ui.worlds = nil
         held, mouse_was_down, armed, ui.drag = {}, nil, nil, nil
-        ui.editing, ui.confirm, ui.search.active, ui.value = nil, nil, false, nil
+        ui.editing, ui.confirm, ui.search.active, ui.value, ui.binding = nil, nil, false, nil, nil
     end
 end
 
@@ -3465,9 +3982,14 @@ local function tick()
     -- hotkey: one key-state read per frame; the window check only while the key is down
     local vk = VK[hotkey_name] or VK.F8
     local down = key_down(vk)
-    if down and not hotkey_was_down and focused_window() then open_panel(not ui.open) end
+    if ui.hotkey_hold then
+        if not down then ui.hotkey_hold = nil end   -- a new hotkey: wait until it is let go
+    elseif down and not hotkey_was_down and focused_window() then
+        open_panel(not ui.open)
+    end
     hotkey_was_down = down
 
+    if not ui.open and cursor.raw.saved then pcall(cursor.give_input, now) end
     if ui.open then
         local ok, why = pcall(panel_frame, now)
         if ok then
