@@ -1853,8 +1853,8 @@ local function resolve_gun(weapon, key)
             end
             return p
         end
-        add_row(weapon, 'Handling', 'recoil_h', 'Recoil (horizontal)', 'f32', { follow(w('recoil_dh', 0), { 2, 10 }, 1), w('recoil_ch', 28) }, 0, 500, 1, 5)
-        add_row(weapon, 'Handling', 'recoil_v', 'Recoil (vertical)', 'f32', { follow(w('recoil_dv', 4), { 4, 12 }, 1), w('recoil_cv', 32) }, 0, 500, 1, 5)
+        add_row(weapon, 'Handling', 'recoil_h', 'Recoil (horizontal)', 'f32', { follow(w('recoil_dh', 0), { 2, 10 }, 1), w('recoil_ch', 28) }, 0, 2000, 1, 5)
+        add_row(weapon, 'Handling', 'recoil_v', 'Recoil (vertical)', 'f32', { follow(w('recoil_dv', 4), { 4, 12 }, 1), w('recoil_cv', 32) }, 0, 2000, 1, 5)
         add_row(weapon, 'Handling', 'spread_h', 'Spread (horizontal)', 'f32', { follow(w('spread_h', 84), { 14 }, 1) }, 0, 1000, 1, 10)
         add_row(weapon, 'Handling', 'spread_v', 'Spread (vertical)', 'f32', { follow(w('spread_v', 88), { 16 }, 1) }, 0, 1000, 1, 10)
         add_row(weapon, 'Handling', 'sway', 'Sway multiplier', 'f32', { follow(w('sway', 104), { 1 }, 1) }, 0, 100, 0.1, 0.5)
