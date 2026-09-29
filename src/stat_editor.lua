@@ -2577,13 +2577,29 @@ end
 -- Once the tables are in: resolve every weapon, then apply the saved values, a slice per frame.
 local progress = nil
 
+-- The lists built once every table is found: one step per frame (phase 'building'), so no frame
+-- carries them all. Each step: { name, function, what failing means }.
 local function become_ready(final)
-    local ok, why = pcall(build_stratagems)
-    if not ok then log('stratagems: not listed: ' .. tostring(why)) end
-    ok, why = pcall(KINDS[TYPES.items].build)
-    if not ok then log('attachments: not listed: ' .. tostring(why)) end
-    ok, why = pcall(KINDS[TYPES.passive].build)
-    if not ok then log('armor passives: not listed: ' .. tostring(why)) end
+    state.build_steps = {
+        { 'stratagems', build_stratagems, 'stratagems: not listed: ' },
+        { 'attachments', KINDS[TYPES.items].build, 'attachments: not listed: ' },
+        { 'passives', KINDS[TYPES.passive].build, 'armor passives: not listed: ' },
+    }
+    set_status('building', 'listing stratagems, attachments and armor passives')
+end
+
+-- The next build step; once all are done, weapons are resolved and saved values applied.
+function state.build_some()
+    local build_steps = state.build_steps
+    local step = table.remove(build_steps, 1)
+    if step then
+        local started = api.now()
+        local ok, why = pcall(step[2])
+        if not ok then log(step[3] .. tostring(why)) end
+        state.perf.alone('build ' .. step[1], api.now() - started)
+        if #build_steps > 0 then return end
+    end
+    state.build_steps = nil
     progress = { next = 1 }
     pending, apply_at = {}, 1
     if settings.changes then
@@ -4568,7 +4584,10 @@ local function tick()
     state.frame = state.frame + 1
     local now = api.now()
     state.perf.begin(now)
-    if state.phase == 'preparing' then
+    if state.phase == 'building' then
+        state.build_some()
+        state.perf.lap('build')
+    elseif state.phase == 'preparing' then
         prepare(now + FRAME_BUDGET)
         state.perf.lap('prepare')
     elseif state.phase == 'ready' then
