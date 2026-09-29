@@ -214,10 +214,5 @@ match, which is usually enough to find the cause.
   armor passive value.
 - **DiverKit** and **HD2 HUD Plus**, which showed where the game's UI font lives.
 
-## License
-
-Public domain ([The Unlicense](LICENSE)). Use, change, share or sell it however you like; no
-credit needed.
-
 SHODAN Stat Editor is not affiliated with or endorsed by Arrowhead Game Studios or Sony
 Interactive Entertainment.
