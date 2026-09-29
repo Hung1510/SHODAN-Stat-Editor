@@ -1215,7 +1215,7 @@ KINDS[TYPES.items].MODS = {
 -- magazine, heatsink, canister) and modify its stats. For the weapon entity `key`: 'component:offset' ->
 -- { lead = the default attachment's value (payload offset in the deltas; nil: it sets none), copies =
 -- that value in every attachment of the line }, and mods = type -> the stat modifiers of the attachments
--- only its line uses (its slot 5 line, its Custom muzzle brake).
+-- only its line uses (its slot 5 line).
 local function attachments(key)
     local cache = KINDS[TYPES.custom].cache
     if cache[key] ~= nil then return cache[key] end
@@ -1249,20 +1249,28 @@ local function attachments(key)
             add(spec.mods(words))
         end
     end
-    local muzzle, at = spec.find(fitted[4])
-    if muzzle and muzzle.names[at]:find('custom') then add(spec.mods(spec.words(muzzle, at))) end
     cache[key] = out
     return out
 end
 
 -- The Attachments tab: every optic, underbarrel and muzzle with an ergonomics, sway, recoil or spread modifier,
--- as an entry of its own (they apply to every weapon fitted with it). Custom muzzle brakes follow their weapon.
+-- as an entry of its own (they apply to every weapon fitted with it). A Custom muzzle brake is one weapon's
+-- own (the Penetrator's, the Adjudicator's, ...): named after the weapon that comes with it (no designation).
 KINDS[TYPES.items].build = function()
     for k = #weapons, 1, -1 do
         if weapons[k].attachment then by_hash[weapons[k].hash] = nil; table.remove(weapons, k) end
     end
     local spec, list = KINDS[TYPES.items], {}
     local kinds = { [1] = 'Underbarrel', [2] = 'Optic', [4] = 'Muzzle' }
+    local custom, owner = tables[TYPES.custom], {}
+    for _, w in ipairs(weapons) do
+        local row = custom and w.key and not w.stratagem and custom.index[w.key]
+        for slot = 0, row and 9 or -1 do
+            local at = custom.copies[1] + HEADER_BYTES + row + slot * 8
+            local id = peek4(at) == 4 and peek4(at + 4)
+            if id and id ~= 0 and not owner[id] then owner[id] = w.name end
+        end
+    end
     for _, group in ipairs(spec.list) do
         local t = tables[group]
         spec.prepare(t)
@@ -1270,13 +1278,17 @@ KINDS[TYPES.items].build = function()
         for _, r in ipairs(t.order) do
             local lo, hi, n = peek4(top + r + 48), peek4(top + r + 52), peek4(top + r + 56)
             local slot = lo and hi and n and n > 0 and n < 8 and peek4(lo + hi * 4294967296)
-            local mods = kinds[slot] and not t.names[r]:find('custom') and spec.mods(spec.words(t, r))
+            local mods = kinds[slot] and spec.mods(spec.words(t, r))
             local any = false
             for _, m in ipairs(spec.MODS) do any = any or (mods and mods[m[1]] ~= nil) end
-            local hash = any and string.format('FFFFFFFF%08X', peek4(top + r + 8))
+            local id = peek4(top + r + 8)
+            local hash = any and string.format('FFFFFFFF%08X', id)
+            local own = t.names[r]:find('custom') and owner[id]
+            local name = own and ('Muzzle brake (' .. own:gsub('^%S*%d%S*%s+', '') .. ')') or t.labels[r]
             if hash and not by_hash[hash] then
-                list[#list + 1] = { name = t.labels[r], slot = 'Attachments', hash = hash, rows = {}, by_id = {},
-                                    note = kinds[slot] .. '. Its modifiers apply to every weapon fitted with it.',
+                list[#list + 1] = { name = name, slot = 'Attachments', hash = hash, rows = {}, by_id = {},
+                                    note = own and ('Muzzle. Only the ' .. own .. ' comes with it.')
+                                           or (kinds[slot] .. '. Its modifiers apply to every weapon fitted with it.'),
                                     attachment = { mods = mods, order = slot == 2 and 1 or slot == 1 and 2 or 3 } }
                 by_hash[hash] = list[#list]
             end

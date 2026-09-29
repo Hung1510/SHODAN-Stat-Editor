@@ -66,7 +66,7 @@ the Hot Dog's flame damage is the Torcher's; the panel notes values that change 
 
 | Attachment | Stats |
 |---|---|
-| Optics, underbarrels, muzzles, shotgun chokes | Ergonomics bonus, and where the attachment has them: sway, recoil (horizontal, vertical), recoil climb (horizontal, vertical) and spread (horizontal, vertical) multipliers |
+| Optics, underbarrels, muzzles (weapons' own Custom muzzle brakes included), shotgun chokes | Ergonomics bonus, and where the attachment has them: sway, recoil (horizontal, vertical), recoil climb (horizontal, vertical) and spread (horizontal, vertical) multipliers |
 
 An attachment's values apply to every weapon fitted with it.
 
@@ -169,8 +169,10 @@ share the whole setup.
 - **Your values win over attachments.** A weapon's magazine and heat values stay what you set,
   whichever magazine, heatsink or canister is fitted; what you haven't changed (a magazine's
   ergonomics, for example) still comes from the attachment. Changing a weapon's ergonomics, sway,
-  recoil or spread also cancels those of the attachments only that weapon uses (its magazines, a
-  fixed Custom muzzle brake).
+  recoil or spread also cancels those of the attachments only that weapon uses (its magazines).
+- **Custom muzzle brakes.** Seven weapons come with a muzzle brake of their own (Liberator
+  Penetrator, Pacifier, Coyote, Adjudicator, Tenderizer, Hyena, Diligence Counter Sniper). Each is
+  an entry on the Attachments tab, named after its weapon ("Muzzle brake (Liberator Penetrator)").
 - The **armory** still shows the game's own numbers; the changes apply in play.
 - **In multiplayer** your changes exist only in your game.
 - **Other mods** that change the same stats will fight over them; use one or the other.
