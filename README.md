@@ -1,7 +1,7 @@
 # SHODAN Stat Editor
 
-An in-game panel for **Helldivers 2** that changes weapon and stratagem stats while you play.
-Press **F8**, pick a weapon or stratagem, and change its numbers. Changes apply at once, are
+An in-game panel for **Helldivers 2** that changes the stats of weapons, throwables, stratagems,
+attachments and armor passives while you play. Press **F8**, pick one, and change its numbers. Changes apply at once, are
 saved, and are applied again automatically every time the game starts. Keep setups as presets:
 5 per weapon, and up to 50 named ones for everything you have changed.
 
@@ -70,16 +70,26 @@ the Hot Dog's flame damage is the Torcher's; the panel notes values that change 
 
 An attachment's values apply to every weapon fitted with it.
 
+**Armor passives**: all 31, on the Armors tab
+
+| Passive | Stats |
+|---|---|
+| Every armor passive (Fortified, Servo-Assisted, Med-Kit, Siege-Ready, Gunslinger, Democracy Protects, ...) | Every value it has: damage taken from explosions, fire, gas, arc, impacts and to the chest; extra stims and throwables; stim duration; reload speeds; ammo capacity; throw range; melee damage; limb health; noise and detection range; armor rating and ergonomics bonuses; and the weapon stat values some passives carry |
+
+Multipliers show as the game stores them: 1 is no change, 0.5 damage taken is 50% resistance,
+1.3 reload speed is 30% faster. A passive's values apply to every armor that has it.
+
 ## Install
 
 1. Install **Bingus Shared Loader** (v15 or newer).
-2. Download `SHODAN-Stat-Editor-v1.4.1.zip` from the [releases page](../../releases/latest).
+2. Download `SHODAN-Stat-Editor-v2.0.0.zip` from the [releases page](../../releases/latest).
 3. Install the zip with your Helldivers 2 mod manager, like any other mod package.
 
 ## Use
 
-Press **F8** in game to open or close the panel. The mouse works wherever the game shows a
-cursor; the keyboard works everywhere:
+Press **F8** in game to open or close the panel, or click its **X**. While it is open the game
+gets none of your keys or mouse input, so typing never moves you or opens a game menu (this can
+be turned off in Settings).
 
 | Key | Action |
 |---|---|
@@ -101,16 +111,28 @@ Every change is saved to
 %LOCALAPPDATA%\CowboyBingus\Helldivers2\StatEditor\config.txt
 ```
 
-and applied again on every start, a few seconds after launch (on the title screen). The hotkey
-can be changed in that file (for example `hotkey F7`). Delete a line, or the whole file, to go
-back to the game's values.
+and applied again on every start, a few seconds after launch (on the title screen). Delete a
+line, or the whole file, to go back to the game's values.
+
+## Settings
+
+The **Settings** button at the bottom right of the panel opens its options:
+
+- **Open / close key**: click it and press the key you want (F1–F12, Insert, Home, End, Pause or
+  Scroll Lock).
+- **Block game input while open**: on by default.
+- **Apply my changes**: turn it off to play with the game's own values; your changes are kept
+  and come back when you turn it on.
+- **Panel size**, **side** and **background opacity**.
+- **Ask before Reset all**, and **Remember last tab and weapon**.
+
+The page also has the mod's version, a link to this page and the log file's location.
 
 ## Search
 
 Click the box under the weapon list (or press Ctrl+F) and type: the list shows the weapons and
 stratagems of every tab whose name holds all the words typed ("orb las" finds the Orbital
-Laser). Enter keeps the results; Esc or **X** clears the search. The game also receives the keys
-you type, so search from a menu.
+Laser). Enter keeps the results; Esc or **X** clears the search.
 
 ## Presets
 
@@ -128,7 +150,6 @@ you have made.
   **Rename** and **Delete** work on the chosen one; overwriting and deleting ask twice.
 - Keyboard on that tab: Up/Down choose, Enter loads, Insert makes a new one, Shift+Insert saves
   into the chosen one, F2 renames, Del deletes.
-- The game also receives the keys you type, so name presets from a menu (pause menu, ship).
 
 Presets are saved next to config.txt, as `weapon_presets.txt` and `preset_01.txt` …
 `preset_50.txt`. A full preset file can be copied into another player's `StatEditor` folder to
@@ -172,7 +193,9 @@ match, which is usually enough to find the cause.
 - **HD2Runtime** by Skyeshade, whose weapon and stratagem catalogs name the weapons and map
   every strike to its projectiles, blasts and damage.
 - **[Filediver](https://github.com/xypwn/filediver)** and the **[helldivers.io](https://helldivers.io/)**
-  data dump by shalzuth, for the game's data layouts.
+  data dump by shalzuth, for the game's data layouts and the armor passives.
+- The **[Helldivers 2 wiki](https://helldivers.wiki.gg/)**, whose passive descriptions name every
+  armor passive value.
 - **DiverKit** and **HD2 HUD Plus**, which showed where the game's UI font lives.
 
 ## License
