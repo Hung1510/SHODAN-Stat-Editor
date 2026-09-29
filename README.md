@@ -94,7 +94,7 @@ Multipliers show as the game stores them: 1 is no change, 0.5 damage taken is 50
 ## Install
 
 1. Install **Bingus Shared Loader** (v15 or newer).
-2. Download `SHODAN-Stat-Editor-v2.0.0.zip` from the [releases page](../../releases/latest).
+2. Download `SHODAN-Stat-Editor-v2.1.0.zip` from the [releases page](../../releases/latest).
 3. Install the zip with your Helldivers 2 mod manager, like any other mod package.
 
 ## Use

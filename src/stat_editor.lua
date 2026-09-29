@@ -1,6 +1,6 @@
 -- HD2-Addon: mods/shodan/stat_editor
--- SHODAN Stat Editor v2.0.0 by SHODAN. Requires Bingus Shared Loader (API 1).
-local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '2.0.0', author = 'SHODAN', log = 'SHODANStatEditor.log' }
+-- SHODAN Stat Editor v2.1.0 by SHODAN. Requires Bingus Shared Loader (API 1).
+local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '2.1.0', author = 'SHODAN', log = 'SHODANStatEditor.log' }
 -- ammunition types: the game's names, by the text id of the item (its English text)
 MOD.ammo_names = {
     [0x046FF548] = '5.5x50mm Ripper',
