@@ -1,6 +1,89 @@
 -- HD2-Addon: mods/shodan/stat_editor
 -- SHODAN Stat Editor v2.0.0 by SHODAN. Requires Bingus Shared Loader (API 1).
 local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '2.0.0', author = 'SHODAN', log = 'SHODANStatEditor.log' }
+-- ammunition types: the game's names, by the text id of the item (its English text)
+MOD.ammo_names = {
+    [0x046FF548] = '5.5x50mm Ripper',
+    [0x06E60303] = '15x100mm Toxic',
+    [0x0877EA60] = '15x100mm Plasma',
+    [0x0CC46E7C] = '9x70mm Socom Assassin',
+    [0x148220A3] = '13x40mm Ripper',
+    [0x14AAD316] = '10g Fragmentation',
+    [0x18164B61] = '12x25mm Plasma',
+    [0x203BCD08] = '15x100mm Standard Rocket',
+    [0x21C67371] = '10g Magnum',
+    [0x224D7BB0] = '5.5x50mm Full Metal Jacket',
+    [0x2314F53E] = '15x100mm High Velocity',
+    [0x236506A1] = '9x20mm Hollow Point',
+    [0x2602D227] = '15x100mm Fragmentation',
+    [0x26A396C1] = '10g Magnum Triball',
+    [0x3262E42D] = '5.5x50mm Explosive',
+    [0x3A6AE678] = '8x60mm Penetrator',
+    [0x3AF98635] = '15x100mm Emp-Rounds',
+    [0x3DD3FF6C] = '12g Buckshot',
+    [0x40239E59] = '5.5x50mm Self Propelled',
+    [0x46B0DA4A] = '12x25mm Explosive',
+    [0x497E2D30] = '9x20mm Toxic',
+    [0x4B0BCF20] = '10g Rifled Slugs',
+    [0x4B4E4C71] = '8x60mm Subsonic',
+    [0x4BEC715C] = '5.5x50mm Hollow-Point',
+    [0x529F62D5] = '9x70mm Self Propelled',
+    [0x58EAF117] = '12g Flechettes',
+    [0x5A4CFA67] = '12x25mm Full Metal Jacket',
+    [0x5B8C1CF6] = '5.5x50mm Penetrator',
+    [0x650687E4] = '5.5x50mm Super Uranium Core',
+    [0x66F92CE0] = '5.5x50mm Devastator',
+    [0x6712AADE] = '5.5x50mm Double Power',
+    [0x67984B7F] = '9x70mm Full Metal Jacket',
+    [0x67D890B0] = '5.5x50mm Subsonic',
+    [0x6A4F4733] = '9x70mm Super Uranium Core',
+    [0x6A6A555F] = '9x20mm Plasma',
+    [0x70157916] = '12g Magnum',
+    [0x7496CC66] = '10g Tri-Ball',
+    [0x76321A6C] = '8x60mm High Velocity',
+    [0x7AB0ACAD] = '8x60mm Devastator',
+    [0x7D628230] = '12x25mm Hollow Point',
+    [0x7DDF07F3] = '10g Dual Sabot',
+    [0x7DF3409F] = '9x70mm Penetrator',
+    [0x82820B4B] = '9x20mm Thermite',
+    [0x8800F269] = '15x100mm High Explosive',
+    [0x8E597A62] = '15x100mm Thermite',
+    [0x8E74AA13] = '12g Bugshot',
+    [0x92D110A0] = '12x25mm Thermite',
+    [0x9321CA5B] = '9x20mm Explosive',
+    [0x94BE8BEA] = '10g Bugshot',
+    [0xA2D4A5F4] = '10g Liberty Fire',
+    [0xA4083CFB] = '8x60mm Liberty Fire',
+    [0xA44CF329] = '9x70mm High Velocity',
+    [0xA56C7CF7] = '13x40mm Full Metal Jacket',
+    [0xB0D2442D] = '5.5x50mm High Velocity',
+    [0xB71928D4] = '12g Magnum Triball',
+    [0xB923E3F9] = '8x60mm Sniper Armour Piercing',
+    [0xBBF12281] = '12x25mm Toxic',
+    [0xBF670968] = '13x40mm Penetrator',
+    [0xC3A21061] = '10g Scatter Shot',
+    [0xC5C01BAE] = '8x60mm Airburst',
+    [0xC5C1096B] = '12g Liberty Fire',
+    [0xC6259AE0] = '8x60mm Super Uranium Core',
+    [0xC711E6A8] = '8x60mm Full Metal Jacket',
+    [0xCDDF65D0] = '13x40mm Hollow Point',
+    [0xCF73C4BE] = '12x25mm High Velocity',
+    [0xD1FA60F1] = '9x70mm Sniper Armour Piercing',
+    [0xD9499EE2] = '13x40mm Magnum',
+    [0xDEFDAB88] = '10g Birdshot',
+    [0xE1575512] = '10g High Velocity Sabot',
+    [0xE164BFF6] = '9x20mm Ripper',
+    [0xE6F9C309] = '10g Flechettes',
+    [0xE913EE91] = '10g Sabot',
+    [0xEE3125B7] = '8x60mm Explosive',
+    [0xF5114BD7] = '12x25mm Ripper',
+    [0xF5AE8259] = '9x20mm Full Metal Jacket',
+    [0xF7917239] = '8x60mm Double Power',
+    [0xF9B182A7] = '12g Birdshot',
+    [0xFA10DBC2] = '12g Tri-Ball',
+    [0xFA6A7DA3] = '12g Scatter Shot',
+    [0xFB7A777E] = '9x20mm High Velocity',
+}
 if rawget(_G, MOD.global) then return end
 
 -- Weapons: name, loadout slot, entity hash (from HD2Runtime's capability catalogs), variant note,
@@ -1140,7 +1223,8 @@ end
 -- 'Standard' item. `words`: an item's deltas, 'component:offset' -> payload offset in the deltas, for
 -- magazine (component 5) and heat (266) values and the weapon's stat bonuses (236, +956: 8 of type,
 -- value); `mods`: where an item's stat modifiers are, type -> value (0 ergonomics, added; the rest
--- multiply: 1 sway, 2 / 4 recoil horizontal / vertical, 10 / 12 recoil climb, 14 / 16 spread; MODS: their rows).
+-- multiply: 1 sway, 2 / 4 recoil horizontal / vertical, 10 / 12 recoil climb, 14 / 16 spread, each followed by
+-- its 'Alt' twin, 3 / 5 / ...: WeaponStatModifierType; MODS: their rows).
 KINDS[TYPES.items].prepare = function(t)
     if t.lines then return end
     t.lines, t.order, t.names, t.labels = {}, {}, {}, {}
@@ -1256,12 +1340,14 @@ end
 -- The Attachments tab: every optic, underbarrel and muzzle with an ergonomics, sway, recoil or spread modifier,
 -- as an entry of its own (they apply to every weapon fitted with it). A Custom muzzle brake is one weapon's
 -- own (the Penetrator's, the Adjudicator's, ...): named after the weapon that comes with it (no designation).
+-- Ammunition types (slot 6, and 7: a weapon's alternate load) take the game's names (MOD.ammo_names, by the
+-- item's text id at +16), else their own ('Shotgun 10g. Buckshot' -> '10g Buckshot').
 KINDS[TYPES.items].build = function()
     for k = #weapons, 1, -1 do
         if weapons[k].attachment then by_hash[weapons[k].hash] = nil; table.remove(weapons, k) end
     end
     local spec, list = KINDS[TYPES.items], {}
-    local kinds = { [1] = 'Underbarrel', [2] = 'Optic', [4] = 'Muzzle' }
+    local kinds = { [1] = 'Underbarrel', [2] = 'Optic', [4] = 'Muzzle', [6] = 'Ammunition', [7] = 'Alternate ammunition' }
     local custom, owner = tables[TYPES.custom], {}
     for _, w in ipairs(weapons) do
         local row = custom and w.key and not w.stratagem and custom.index[w.key]
@@ -1285,11 +1371,17 @@ KINDS[TYPES.items].build = function()
             local hash = any and string.format('FFFFFFFF%08X', id)
             local own = t.names[r]:find('custom') and owner[id]
             local name = own and ('Muzzle brake (' .. own:gsub('^%S*%d%S*%s+', '') .. ')') or t.labels[r]
+            if slot == 6 or slot == 7 then
+                name = MOD.ammo_names[peek4(top + r + 16) or 0]
+                       or t.labels[r]:gsub(' [Aa]lternate$', ''):gsub('^%a[%a%-]* ', ''):gsub('%. ', ' ', 1)
+                if slot == 7 then name = name .. ' (alternate)' end
+            end
             if hash and not by_hash[hash] then
                 list[#list + 1] = { name = name, slot = 'Attachments', hash = hash, rows = {}, by_id = {},
                                     note = own and ('Muzzle. Only the ' .. own .. ' comes with it.')
+                                           or slot >= 6 and (kinds[slot] .. '. Its modifiers apply to every weapon loaded with it.')
                                            or (kinds[slot] .. '. Its modifiers apply to every weapon fitted with it.'),
-                                    attachment = { mods = mods, order = slot == 2 and 1 or slot == 1 and 2 or 3 } }
+                                    attachment = { mods = mods, order = slot == 2 and 1 or slot == 1 and 2 or slot == 4 and 3 or 4 } }
                 by_hash[hash] = list[#list]
             end
         end
@@ -1897,7 +1989,11 @@ local function resolve(weapon)
             if offset then
                 local f = field_at(TYPES.deltas, offset, 'f32', 1000)
                 f.signed = m[4] < 0
-                add_row(weapon, 'Attachment', m[2], m[3], 'f32', { { id = m[2], field = f } }, m[4], m[5], m[6], m[7])
+                local parts = { { id = m[2], field = f } }
+                -- its 'Alt' twin (the next type: recoil, climb and spread have one) moves with it
+                local alt = m[1] >= 2 and weapon.attachment.mods[m[1] + 1]
+                if alt then parts[2] = { id = m[2] .. '_alt', field = field_at(TYPES.deltas, alt, 'f32', 1000) } end
+                add_row(weapon, 'Attachment', m[2], m[3], 'f32', parts, m[4], m[5], m[6], m[7])
             end
         end
         return

@@ -62,13 +62,15 @@ How far a Guard Dog flies from you is decided by its behaviour in the game code,
 the panel edits, so it can't be changed. The AR-23 dog's bullet is the Liberator Penetrator's and
 the Hot Dog's flame damage is the Torcher's; the panel notes values that change together.
 
-**Attachments**: optics, underbarrels and muzzles, on the Attachments tab
+**Attachments**: optics, underbarrels, muzzles and ammunition types, on the Attachments tab
 
 | Attachment | Stats |
 |---|---|
 | Optics, underbarrels, muzzles (weapons' own Custom muzzle brakes included), shotgun chokes | Ergonomics bonus, and where the attachment has them: sway, recoil (horizontal, vertical), recoil climb (horizontal, vertical) and spread (horizontal, vertical) multipliers |
+| Ammunition types (94, alternate loads included), by their names in game | Recoil and spread multipliers |
 
-An attachment's values apply to every weapon fitted with it.
+An attachment's values apply to every weapon fitted with it (an ammunition type's, to every
+weapon loaded with it).
 
 **Armor passives**: all 31, on the Armors tab
 
