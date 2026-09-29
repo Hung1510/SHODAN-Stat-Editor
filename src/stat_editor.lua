@@ -1347,13 +1347,13 @@ end
 
 KINDS[TYPES.items].MODS = {
     { 0, 'ergonomics', 'Ergonomics bonus', -100, 100, 1, 5 },
-    { 1, 'sway', 'Sway multiplier', 0, 10, 0.05, 0.25 },
-    { 2, 'recoil_h', 'Recoil multiplier (horizontal)', 0, 10, 0.05, 0.25 },
-    { 4, 'recoil_v', 'Recoil multiplier (vertical)', 0, 10, 0.05, 0.25 },
-    { 10, 'climb_h', 'Climb multiplier (horizontal)', 0, 10, 0.05, 0.25 },
-    { 12, 'climb_v', 'Climb multiplier (vertical)', 0, 10, 0.05, 0.25 },
-    { 14, 'spread_h', 'Spread multiplier (horizontal)', 0, 10, 0.05, 0.25 },
-    { 16, 'spread_v', 'Spread multiplier (vertical)', 0, 10, 0.05, 0.25 },
+    { 1, 'sway', 'Sway multiplier', 0, 50, 0.05, 0.25 },
+    { 2, 'recoil_h', 'Recoil multiplier (horizontal)', 0, 50, 0.05, 0.25 },
+    { 4, 'recoil_v', 'Recoil multiplier (vertical)', 0, 50, 0.05, 0.25 },
+    { 10, 'climb_h', 'Climb multiplier (horizontal)', 0, 50, 0.05, 0.25 },
+    { 12, 'climb_v', 'Climb multiplier (vertical)', 0, 50, 0.05, 0.25 },
+    { 14, 'spread_h', 'Spread multiplier (horizontal)', 0, 50, 0.05, 0.25 },
+    { 16, 'spread_v', 'Spread multiplier (vertical)', 0, 50, 0.05, 0.25 },
 }
 
 -- A weapon's attachments set magazine and heat values of their own over the weapon's (its slot 5 item:
@@ -1671,7 +1671,7 @@ local function resolve_gun(weapon, key)
         end
         add_row(weapon, section, idp .. 'pellets', 'Projectiles per shot', 'u32',
                 { part(idp .. 'pellets', T_PROJECTILE, p + 28, 'u32', 1000) }, 1, 100, 1, 5)
-        proj('velocity', 'Velocity (m/s)', 32, 20000, 10, 100)
+        proj('velocity', 'Velocity (m/s)', 32, 100000, 10, 100)
         proj('drag', 'Drag factor', 40, 100, 0.05, 0.5)
         proj('pen_slowdown', 'Penetration slowdown', 64, 100, 0.05, 0.25)
         local impact = read_field(field_at(T_PROJECTILE, p + 144, 'u32', 100000))
@@ -1868,8 +1868,8 @@ local function resolve_gun(weapon, key)
         end
         add_row(weapon, 'Handling', 'recoil_h', 'Recoil (horizontal)', 'f32', { follow(w('recoil_dh', 0), { 2, 10 }, 1), w('recoil_ch', 28) }, 0, 2000, 1, 5)
         add_row(weapon, 'Handling', 'recoil_v', 'Recoil (vertical)', 'f32', { follow(w('recoil_dv', 4), { 4, 12 }, 1), w('recoil_cv', 32) }, 0, 2000, 1, 5)
-        add_row(weapon, 'Handling', 'spread_h', 'Spread (horizontal)', 'f32', { follow(w('spread_h', 84), { 14 }, 1) }, 0, 1000, 1, 10)
-        add_row(weapon, 'Handling', 'spread_v', 'Spread (vertical)', 'f32', { follow(w('spread_v', 88), { 16 }, 1) }, 0, 1000, 1, 10)
+        add_row(weapon, 'Handling', 'spread_h', 'Spread (horizontal)', 'f32', { follow(w('spread_h', 84), { 14 }, 1) }, 0, 5000, 1, 10)
+        add_row(weapon, 'Handling', 'spread_v', 'Spread (vertical)', 'f32', { follow(w('spread_v', 88), { 16 }, 1) }, 0, 5000, 1, 10)
         add_row(weapon, 'Handling', 'sway', 'Sway multiplier', 'f32', { follow(w('sway', 104), { 1 }, 1) }, 0, 100, 0.1, 0.5)
         add_row(weapon, 'Handling', 'ergonomics', 'Ergonomics', 'f32', { follow(w('ergonomics', 356), { 0 }, 0) }, 0, 1000, 1, 5)
     end
@@ -2156,7 +2156,7 @@ local function resolve_stratagem(entry)
             local row = tables[T_PROJECTILE] and tables[T_PROJECTILE].index[record]
             if row then
                 local id = 'p' .. record .. '_velocity'
-                add_row(entry, section, id, 'Velocity (m/s)', 'f32', { part(id, T_PROJECTILE, row + 32, 'f32', 100000) }, 0, 20000, 10, 100)
+                add_row(entry, section, id, 'Velocity (m/s)', 'f32', { part(id, T_PROJECTILE, row + 32, 'f32', 100000) }, 0, 100000, 10, 100)
             end
         elseif kind == 'X' then
             local row = tables[T_EXPLOSION] and tables[T_EXPLOSION].index[record]
@@ -2263,7 +2263,7 @@ local function resolve_throwable(entry)
             local q = damage(read_field(field_at(T_PROJECTILE, prow + 60, 'u32', 100000)))
             if q then damage_rows(entry, 'Shrapnel', 'shrapnel_', q, 'Shrapnel') end
             add_row(entry, 'Shrapnel', 'shrapnel_velocity', 'Velocity (m/s)', 'f32',
-                    { part('shrapnel_velocity', T_PROJECTILE, prow + 32, 'f32', 100000) }, 0, 20000, 10, 100)
+                    { part('shrapnel_velocity', T_PROJECTILE, prow + 32, 'f32', 100000) }, 0, 100000, 10, 100)
             explosion(read_field(field_at(T_PROJECTILE, prow + 144, 'u32', 100000)), 'bomblet_', 'Shrapnel explosion', false)
         end
         return true
