@@ -810,7 +810,7 @@ local T_HEAT, T_SPRAY, T_STATUS, T_MELEE = 0x4C981CD9, 0x8E551126, 0xC63E0B22, 0
 -- later tables, in one local (the main chunk is at LuaJIT's 200-local limit)
 local TYPES = { arc_weapon = 0xB87BA9ED, arc = 0xAFDF0267, health = 0xB3915DE3, sensor = 0x14729B6A, detector = 0xFF67A367,
                 turret = 0x1EBA7593, custom = 0xEBA8F3D0, items = 0x1E604234, deltas = 0x683E604F,
-                throwable = 0xAF16BCB5, explosive = 0xF5CF9B8C, sticky = 0x9AF175A4 }
+                throwable = 0xAF16BCB5, explosive = 0xF5CF9B8C, sticky = 0x9AF175A4, passive = 0x63CE0FEB }
 local KINDS = {
     [T_WEAPON] = { name = 'weapon', stride = 1232, keyed = true },
     [T_MAGAZINE] = { name = 'magazine', stride = 160, keyed = true },
@@ -865,6 +865,8 @@ local KINDS = {
     [TYPES.sticky] = { name = 'sticky', stride = 76, keyed = true, slack = 4 },
     -- one table per stratagem group (orbitals, eagles, backpacks, ...), rows keyed by the id at +4
     [T_STRATAGEM] = { name = 'stratagem', stride = 400, tail = true, id_at = 4, groups = true },
+    -- armor passives (HelldiverCustomizationPassiveBonusSettings): one table per passive, all back to back
+    [TYPES.passive] = { name = 'armor passive', stride = 1, groups = true, list = {} },
 }
 -- the tables the panel waits for (stratagem groups are taken as they come)
 local KIND_ORDER = { T_WEAPON, T_MAGAZINE, T_ROUNDS, T_FIRE, T_PROJECTILE, T_DAMAGE, T_BEAM_WEAPON, T_BEAM,
@@ -891,6 +893,67 @@ KINDS[TYPES.deltas].parse = function(blob, stride, spec, address)
     spec.layout = at
     return index, entries
 end
+
+-- Armor passive: +0 passive id, +4 name, +8 icon, +16 modifiers (pointer, count: 16 bytes each: id,
+-- type 0 set / 1 add / 2 multiply / 3 seconds, value f32 +8, text), +32 weapon stat modifiers (pointer,
+-- count: 12 bytes each: stat, f32, value f32 +8). The index: its id and where each value is.
+KINDS[TYPES.passive].parse = function(blob, stride, spec, address)
+    local id, mcount, scount = u32(blob, 0), u32(blob, 24), u32(blob, 40)
+    if not (id and mcount and scount) or id > 1000 or mcount > 32 or scount > 32 or u32(blob, 28) ~= 0 or u32(blob, 44) ~= 0 then
+        return nil, 'passive layout does not match this build'
+    end
+    local function at(ptr, count, size)
+        if count == 0 then return 0 end
+        local lo, hi = u32(blob, ptr), u32(blob, ptr + 4)
+        local o = lo and hi and lo + hi * 4294967296 - address - HEADER_BYTES
+        if not o or o < 48 or o + count * size > #blob then return nil end
+        return o
+    end
+    local mo, so = at(16, mcount, 16), at(32, scount, 12)
+    if not mo or not so then return nil, 'passive layout does not match this build' end
+    local index = { id = id, mods = {}, stats = {} }
+    for k = 0, mcount - 1 do
+        index.mods[k + 1] = { id = u32(blob, mo + k * 16), type = u32(blob, mo + k * 16 + 4), offset = mo + k * 16 + 8 }
+    end
+    for k = 0, scount - 1 do index.stats[k + 1] = { stat = u32(blob, so + k * 12), offset = so + k * 12 + 8 } end
+    return index, mcount + scount
+end
+KINDS[TYPES.passive].group_key = function(blob) return 'armor passive ' .. u32(blob, 0) end
+-- names by passive id, as the armory shows them (matched to the wiki by their values)
+KINDS[TYPES.passive].NAMES = {
+    [1] = 'Extra Padding', [2] = 'Scout', [3] = 'Fortified', [5] = 'Electrical Conduit', [6] = 'Engineering Kit',
+    [7] = 'Med-Kit', [8] = 'Servo-Assisted', [9] = 'Democracy Protects', [10] = 'Reinforced Epaulettes',
+    [11] = 'Inflammable', [12] = 'Peak Physique', [13] = 'Advanced Filtration', [14] = 'Unflinching',
+    [15] = 'Acclimated', [16] = 'Siege-Ready', [17] = 'Integrated Explosives', [18] = 'Gunslinger',
+    [19] = 'Adreno-Defibrillator', [20] = 'Ballistic Padding', [21] = 'Desert Stormer', [31] = 'Feet First',
+    [32] = 'Reduced Signature', [33] = 'Rock Solid', [34] = 'Supplementary Adrenaline',
+    [35] = 'Concussive Padding (Reinforced)', [36] = 'Concussive Padding (Grenadier)',
+    [37] = 'Concussive Padding (Hazmat)', [38] = 'Oxygenator', [39] = 'Kinetic Displacement Mitigation',
+    [40] = 'Blunt-Force Mitigation', [41] = 'True Grit' }
+-- modifier labels by id (from the wiki's text for each passive, in the passive's own order)
+KINDS[TYPES.passive].MODS = {
+    [0xAFAE3B47] = '+ Armor rating', [0x26C969A1] = 'Throw range',
+    [0x86A99BB9] = 'Limb health', [0xC36935A9] = 'Recoil crouching / prone',
+    [0xF6FA9626] = '+ Throwables (start, max)', [0x2875F44A] = '+ Stims (start, max)',
+    [0x93EB16A7] = '+ Stim duration (s)', [0x4BDF39C4] = 'Arc damage taken',
+    [0x4DF29271] = 'Fire damage taken', [0xFBF54A40] = 'Limb injury avoidance',
+    [0x25A59469] = 'Impact damage taken', [0xB5A50096] = 'Fire/gas/acid/arc damage taken',
+    [0x1F98D152] = 'Explosive damage taken', [0x6E99CCE5] = 'Gas damage taken',
+    [0xCB814D05] = 'Surviving lethal damage', [0xA68930C2] = 'Chest bleeding damage',
+    [0xCC530B21] = 'Primary reload speed', [0x33C9C713] = 'Ammo capacity',
+    [0x2559B40D] = 'Melee damage', [0x11A3C04C] = 'Knockdown chance',
+    [0x2CFAECA3] = 'Chest damage taken', [0xCD79A687] = 'Walk / run speed',
+    [0xF6D67313] = 'Slide speed / duration', [0xAF8B7112] = 'Noise',
+    [0x432A7993] = 'Point of interest range', [0xB62B4AFD] = 'Leg injury immunity (1 on)',
+    [0xC8CCB6FA] = '+ Ergonomics', [0x54A69284] = 'Explodes after death (s)',
+    [0xB4F88129] = 'Secondary reload speed', [0xAD5289FE] = 'Secondary draw speed',
+    [0x22035F3C] = 'Secondary recoil', [0x73734D67] = 'Flinch (0 prevents it)',
+    [0x21A7BA64] = 'Marker radar scan every (s)', [0x35F17BEC] = 'Support reload speed',
+    [0xA189ADB6] = '+ Stamina when hit', [0x14ECCE15] = 'Enemy detection range' }
+-- the weapon stat modifiers some passives also carry, by stat
+KINDS[TYPES.passive].STATS = {
+    [11] = 'Flinch', [12] = 'Ammo capacity', [13] = 'Primary reload speed', [14] = 'Support reload speed',
+    [15] = 'Secondary reload speed', [16] = 'Secondary draw speed', [17] = 'Secondary recoil' }
 
 -- kind -> { payload = size, index = key -> payload offset, entries = n, copies = { block address },
 -- type = table type }; each stratagem group is under its own key (listed in stratagem_groups)
@@ -1225,6 +1288,50 @@ KINDS[TYPES.items].build = function()
     end)
     for _, entry in ipairs(list) do weapons[#weapons + 1] = entry end
     log('attachments: ' .. #list .. ' with ergonomics, sway, recoil or spread modifiers listed')
+end
+
+KINDS[TYPES.passive].build = function()
+    for k = #weapons, 1, -1 do
+        if weapons[k].passive then by_hash[weapons[k].hash] = nil; table.remove(weapons, k) end
+    end
+    local spec, list = KINDS[TYPES.passive], {}
+    for _, group in ipairs(spec.list) do
+        local index = tables[group].index
+        local hash = string.format('FFFFFFFE%08X', index.id)
+        if index.id ~= 0 and not by_hash[hash] then
+            list[#list + 1] = { name = spec.NAMES[index.id] or ('Passive ' .. index.id), slot = 'Armors', hash = hash,
+                                key = hash_key(hash), rows = {}, by_id = {}, passive = group,
+                                note = 'Shared by every armor with this passive. Multipliers: 1 = no change.' }
+            by_hash[hash] = list[#list]
+        end
+    end
+    table.sort(list, function(a, b) return a.name:lower() < b.name:lower() end)
+    for _, entry in ipairs(list) do weapons[#weapons + 1] = entry end
+    log('armor passives: ' .. #list .. ' listed')
+end
+
+-- A passive's rows: each modifier (named, or by its id), then its weapon stat modifiers.
+KINDS[TYPES.passive].resolve = function(entry)
+    local spec, t = KINDS[TYPES.passive], tables[entry.passive]
+    if not t then return end
+    --        type: min, max, small step, big step
+    local RANGE = { [0] = { 0, 10, 1, 1 }, [1] = { 0, 1000, 0.5, 5 }, [2] = { 0, 10, 0.05, 0.25 }, [3] = { 0, 600, 0.5, 2 } }
+    for k, m in ipairs(t.index.mods) do
+        local r = RANGE[m.type]
+        if m.id ~= 0 and r then
+            local id = string.format('mod_%08X', m.id)
+            if entry.by_id[id] then id = id .. '_' .. k end
+            add_row(entry, 'Passive', id, spec.MODS[m.id] or string.format('Modifier %08X', m.id), 'f32',
+                    { part(id, entry.passive, m.offset, 'f32', 100000) }, r[1], r[2], r[3], r[4])
+        end
+    end
+    for _, st in ipairs(t.index.stats) do
+        local id = 'stat_' .. st.stat
+        if not entry.by_id[id] then
+            add_row(entry, 'Weapon stats', id, spec.STATS[st.stat] or ('Stat ' .. st.stat), 'f32',
+                    { part(id, entry.passive, st.offset, 'f32', 100000) }, 0, 10, 0.05, 0.25)
+        end
+    end
 end
 
 -- Adds a damage row's stats (the first `count`, default all) to `entry`, ids `prefix` .. stat id.
@@ -1770,6 +1877,7 @@ end
 local function resolve(weapon)
     weapon.rows, weapon.by_id = {}, {}
     if weapon.slot == 'Throwables' then resolve_throwable(weapon); return end
+    if weapon.passive then KINDS[TYPES.passive].resolve(weapon); return end
     if weapon.stratagem then resolve_stratagem(weapon); return end
     if weapon.attachment then
         for _, m in ipairs(KINDS[TYPES.items].MODS) do
@@ -1808,12 +1916,13 @@ local function resolve_some(progress, deadline)
     end
     if progress.next <= #weapons then return false end
     local usable, strats = 0, 0
-    state.attachments, state.throwables = 0, 0
+    state.attachments, state.throwables, state.passives = 0, 0, 0
     for _, weapon in ipairs(weapons) do
         if #weapon.rows > 0 then
             if weapon.stratagem then strats = strats + 1
             elseif weapon.attachment then state.attachments = (state.attachments or 0) + 1
             elseif weapon.slot == 'Throwables' then state.throwables = (state.throwables or 0) + 1
+            elseif weapon.passive then state.passives = state.passives + 1
             else usable = usable + 1 end
         end
     end
@@ -2017,6 +2126,8 @@ local function become_ready(final)
     if not ok then log('stratagems: not listed: ' .. tostring(why)) end
     ok, why = pcall(KINDS[TYPES.items].build)
     if not ok then log('attachments: not listed: ' .. tostring(why)) end
+    ok, why = pcall(KINDS[TYPES.passive].build)
+    if not ok then log('armor passives: not listed: ' .. tostring(why)) end
     progress = { next = 1 }
     pending, apply_at = {}, 1
     if settings.changes then
@@ -2041,7 +2152,8 @@ local function prepare(deadline)
         end
     end
     set_status('ready', state.weapons .. ' weapons, ' .. (state.throwables or 0) .. ' throwables, ' ..
-               (state.stratagems or 0) .. ' stratagems and ' .. (state.attachments or 0) .. ' attachments editable; ' ..
+               (state.stratagems or 0) .. ' stratagems, ' .. (state.attachments or 0) .. ' attachments and ' ..
+               (state.passives or 0) .. ' armor passives editable; ' ..
                state.applied .. ' saved value(s) applied' ..
                (#pending > 0 and (', ' .. #pending .. ' waiting') or '') ..
                (#missing > 0 and ('; tables not found: ' .. table.concat(missing, ', ')) or ''))
@@ -2068,7 +2180,8 @@ local function handle_table(address, kind, payload, blob)
     if spec.groups then
         -- each group is its own table; copies of one group have its size and first row
         local list = kind == T_STRATAGEM and stratagem_groups or spec.list
-        kind = (kind == T_STRATAGEM and 'stratagems' or spec.name) .. ' ' .. payload .. ' ' .. (u32(blob, 16 + (spec.id_at or 0)) or 0)
+        kind = spec.group_key and spec.group_key(blob)
+               or ((kind == T_STRATAGEM and 'stratagems' or spec.name) .. ' ' .. payload .. ' ' .. (u32(blob, 16 + (spec.id_at or 0)) or 0))
         if not tables[kind] then list[#list + 1] = kind end
     end
     local entry = tables[kind]
@@ -2110,6 +2223,7 @@ local function rescan()
     log('a settings table moved; scanning again')
     tables, parsed_blocks, stratagem_groups = {}, {}, {}
     KINDS[TYPES.items].list = {}
+    KINDS[TYPES.passive].list = {}
     state.tables = 0
     set_status('searching', 'a table moved; scanning again')
     if hub then hub.wake() end
@@ -2254,7 +2368,7 @@ local ui = { open = false, tab = 'Primary', page = 1, row = 1, scroll = 1, weapo
              editing = nil, confirm = nil,    -- a preset name being typed; an overwrite / delete to confirm
              search = { text = '', active = false },    -- the list's search (active: being typed)
              value = nil }   -- a value being typed: { n = row, weapon, text, fresh (the first key replaces it) }
-local TABS = { 'Primary', 'Secondary', 'Support', 'Throwables', 'Stratagems', 'Attachments', 'Presets' }
+local TABS = { 'Primary', 'Secondary', 'Support', 'Throwables', 'Stratagems', 'Attachments', 'Armors', 'Presets' }
 local LIST_ROWS = 27
 local W, H = 1000, 980       -- panel size in its own units
 
@@ -2893,7 +3007,8 @@ local function draw(width, height)
     outline(0, 0, W, H, GOLD)
     region('panel', 0, 0, W, H, false)
     text('SHODAN STAT EDITOR', 18, 12, 24, GOLD)
-    text(hotkey_name .. ' to close', W - 18, 16, 15, MUTED, nil, true)
+    text(hotkey_name .. ' to open/close', W - 56, 16, 15, MUTED, nil, true)
+    button('close', 'X', W - 16 - 30, 10, 30, 30, true)
     if rawget(_G, 'SHODAN_PACK_HUB') or rawget(_G, 'SHODAN_SCAN_HUB') then
         text('SHODAN weapon mods are running too: they put their own values back every 5 s', 290, 17, 14, WARN, 540)
     end
@@ -2905,10 +3020,13 @@ local function draw(width, height)
         return regions
     end
 
-    for n, tab in ipairs(TABS) do
-        button('tab:' .. tab, tab, 16 + (n - 1) * 104, 52, 98, 32, true, ui.tab == tab)
+    local tab_x = 16
+    for _, tab in ipairs(TABS) do
+        local w = #tab * 8 + 20     -- each tab as wide as its name
+        button('tab:' .. tab, tab, tab_x, 52, w, 32, true, ui.tab == tab)
+        tab_x = tab_x + w + 5
     end
-    button('reset_weapon', 'Reset weapon', W - 16 - 96 - 8 - 124, 52, 124, 32, ui.weapon ~= nil and modified(ui.weapon))
+    button('reset_weapon', ui.weapon and ui.weapon.passive and 'Reset passive' or 'Reset weapon', W - 16 - 96 - 8 - 124, 52, 124, 32, ui.weapon ~= nil and modified(ui.weapon))
     local sure_reset = ui.confirm and ui.confirm.kind == 'reset_all'
     button('reset_all', sure_reset and 'Sure?' or 'Reset all', W - 16 - 96, 52, 96, 32, #overrides > 0, sure_reset)
 
@@ -3281,6 +3399,7 @@ local function click(key)
             settings.last_tab = arg
             mark_config_dirty()
         end
+    elseif kind == 'close' then ui.close_request = true   -- closed by tick, once this frame is done
     elseif kind == 'settings' then ui.settings = not ui.settings
     elseif kind == 'value' and (arg == 'size' or arg == 'opacity') then
         if not ui.value then ui.value = { n = arg, setting = arg, text = tostring(settings[arg]), fresh = true } end
@@ -3992,6 +4111,7 @@ local function tick()
     if not ui.open and cursor.raw.saved then pcall(cursor.give_input, now) end
     if ui.open then
         local ok, why = pcall(panel_frame, now)
+        if ui.close_request then ui.close_request = nil; open_panel(false) end
         if ok then
             ui.errors = 0
         else
