@@ -1846,6 +1846,42 @@ local function resolve_gun(weapon, key)
         end
         cool('heat_cool', 'Cool-down time, full heat (s)', 128, false)
         if not reload then cool('heat_cool_overheated', 'Cool-down time after overheat (s)', 140, true) end
+        -- heat levels (+0: 3 of 24 bytes: +0 heat it starts at, +4 projectile fired from there on, +20
+        -- status effect put on the shooter: its damage row, status row +44). The LAS-17 Double-Edge
+        -- Sickle's damage ramp and self-damage; below the first level it fires the fire mode's projectile.
+        local top = default_of(field_at(T_HEAT, heat + 96, 'f32', 1000000))
+        for k = 1, 3 do
+            local at = heat + (k - 1) * 24
+            local from = default_of(field_at(T_HEAT, at, 'f32', 1000000))
+            local pid = read_field(field_at(T_HEAT, at + 4, 'u32', 100000))
+            local prow = from and from > 0 and pid and tables[T_PROJECTILE] and tables[T_PROJECTILE].index[pid]
+            local did = prow and read_field(field_at(T_PROJECTILE, prow + 60, 'u32', 100000))
+            local qrow = did and tables[T_DAMAGE] and tables[T_DAMAGE].index[did]
+            if qrow then
+                local id = 'heatlvl' .. k .. '_'
+                local section = top and top > 0 and string.format('Above %d%% heat', math.floor(from / top * 100 + 0.5))
+                                or ('Heat level ' .. k)
+                local first = add_row(weapon, section, id .. 'at', 'Starts at heat', 'f32',
+                                      { part(id .. 'at', T_HEAT, at, 'f32', 1000000) }, 0, 100000, 1, 10)
+                first.note = 'the shot fired from this heat on, and what it does to you'
+                damage_rows(weapon, section, id, qrow)
+                local kind = read_field(field_at(T_HEAT, at + 20, 'u32', 100000))
+                local srow = kind and kind > 0 and tables[T_STATUS] and tables[T_STATUS].index[kind]
+                local sid = srow and read_field(field_at(T_STATUS, srow + 44, 'u32', 100000))
+                local hurt = sid and sid > 0 and tables[T_DAMAGE] and tables[T_DAMAGE].index[sid]
+                if hurt then
+                    add_row(weapon, section, id .. 'self', 'Damage to you', 'u32',
+                            { part(id .. 'self', T_DAMAGE, hurt + 4, 'u32', 1000000),
+                              part(id .. 'self_durable', T_DAMAGE, hurt + 8, 'u32', 1000000) }, 0, 100000, 1, 10)
+                    for i = 0, 3 do
+                        if read_field(field_at(T_DAMAGE, hurt + 44 + i * 8, 'u32', 100000)) == 5 then
+                            add_row(weapon, section, id .. 'self_burn', 'Burning applied to you', 'f32',
+                                    { part(id .. 'self_burn', T_DAMAGE, hurt + 48 + i * 8, 'f32', 100000) }, 0, 1000, 0.1, 1)
+                        end
+                    end
+                end
+            end
+        end
     end
     local data = record(T_WEAPON)
     if data then
