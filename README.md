@@ -1,7 +1,7 @@
 # SHODAN Stat Editor
 
 An in-game panel for **Helldivers 2** that changes the stats of weapons, throwables, stratagems,
-attachments and armor passives while you play. Press **F8**, pick one, and change its numbers. Changes apply at once, are
+mechas, attachments and armor passives while you play. Press **F8**, pick one, and change its numbers. Changes apply at once, are
 saved, and are applied again automatically every time the game starts. Keep setups as presets:
 5 per weapon, and up to 50 named ones for everything you have changed.
 
@@ -61,6 +61,16 @@ recharge is its "cool-down time after overheat".
 How far a Guard Dog flies from you is decided by its behaviour in the game code, not by the data
 the panel edits, so it can't be changed. The AR-23 dog's bullet is the Liberator Penetrator's and
 the Hot Dog's flame damage is the Torcher's; the panel notes values that change together.
+
+**Mechas**: the exosuits, FRVs and tanks, on the Mechas tab
+
+| Mecha | Stats |
+|---|---|
+| Exosuits (Patriot, Emancipator, Lumberer, Breacher), FRVs (Gunner, Supply, Incinerator), tanks (Bastion, Maelstrom) | Cooldown, health and armor; the health and armor of every body part (legs, cockpit, tracks, doors, ...) |
+| Their weapons (the arms, turrets and guns) | Each an entry of its own, stat for stat like a weapon |
+
+Body parts whose names aren't known show as "Part N". The Breacher's left arm is a shield whose
+hit is an ability, not a weapon stat, so it has no damage to change.
 
 **Attachments**: optics, underbarrels, muzzles and ammunition types, on the Attachments tab
 

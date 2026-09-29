@@ -84,6 +84,50 @@ MOD.ammo_names = {
     [0xFA6A7DA3] = '12g Scatter Shot',
     [0xFB7A777E] = '9x20mm High Velocity',
 }
+-- vehicle parts (damage zones): their names, by hash
+MOD.vehicle_parts = {
+    [0x04361A85] = 'Left box 0',
+    [0x0A3AD217] = 'Right side panel 1',
+    [0x2374EAE2] = 'Back periscope side 8',
+    [0x2739DFAC] = 'Front right cockpit',
+    [0x28B43F0A] = 'Right front block',
+    [0x2BE9516E] = 'Right front light',
+    [0x30A051A9] = 'Left rear door',
+    [0x3EB413D8] = 'Right top block',
+    [0x3F367765] = 'Left front block',
+    [0x474C6747] = 'Left track',
+    [0x4AD0B30A] = 'Right box 2',
+    [0x5518D31D] = 'Left front door',
+    [0x5BB4504C] = 'Left side panel 1',
+    [0x64A3FA1D] = 'Left leg',
+    [0x657FFA09] = 'Left front light',
+    [0x668F6A68] = 'Hips',
+    [0x67943A63] = 'Top right hatch',
+    [0x6C73E136] = 'Right rear door',
+    [0x6EAA2901] = 'Right mirror',
+    [0x87B05FF4] = 'Right leg',
+    [0x88638E96] = 'Top left hatch',
+    [0x8BBF3B21] = 'Left mirror',
+    [0x900F8255] = 'Right track',
+    [0x91F0B029] = 'Right box 0',
+    [0x924D58A6] = 'Bonnet',
+    [0x9966C78E] = 'Left side panel 0',
+    [0xA7DE41F3] = 'Right front door',
+    [0xB01597A3] = 'Left box 2',
+    [0xB28AF559] = 'Right back panel',
+    [0xB8AD4E86] = 'Back door block',
+    [0xC5327761] = 'Left back panel',
+    [0xC61CD7B0] = 'Right side panel 0',
+    [0xCA47A7A9] = 'Front left cockpit',
+    [0xD67B6D46] = 'Front hull',
+    [0xD7533836] = 'Right box 1',
+    [0xE1B844F5] = 'Rear cockpit',
+    [0xECD09CBC] = 'Antenna',
+    [0xEE2D8C68] = 'Left top block',
+    [0xF72A6714] = 'Left box 1',
+    [0xFA833708] = 'Back hatch',
+    [0xFD477E17] = 'Radar',
+}
 if rawget(_G, MOD.global) then return end
 
 -- Weapons: name, loadout slot, entity hash (from HD2Runtime's capability catalogs), variant note,
@@ -893,7 +937,8 @@ local T_HEAT, T_SPRAY, T_STATUS, T_MELEE = 0x4C981CD9, 0x8E551126, 0xC63E0B22, 0
 -- later tables, in one local (the main chunk is at LuaJIT's 200-local limit)
 local TYPES = { arc_weapon = 0xB87BA9ED, arc = 0xAFDF0267, health = 0xB3915DE3, sensor = 0x14729B6A, detector = 0xFF67A367,
                 turret = 0x1EBA7593, custom = 0xEBA8F3D0, items = 0x1E604234, deltas = 0x683E604F,
-                throwable = 0xAF16BCB5, explosive = 0xF5CF9B8C, sticky = 0x9AF175A4, passive = 0x63CE0FEB }
+                throwable = 0xAF16BCB5, explosive = 0xF5CF9B8C, sticky = 0x9AF175A4, passive = 0x63CE0FEB,
+                vehicle = 0xEAEB2B0D, mount = 0x3845B1E0 }
 local KINDS = {
     [T_WEAPON] = { name = 'weapon', stride = 1232, keyed = true },
     [T_MAGAZINE] = { name = 'magazine', stride = 160, keyed = true },
@@ -950,6 +995,10 @@ local KINDS = {
     [T_STRATAGEM] = { name = 'stratagem', stride = 400, tail = true, id_at = 4, groups = true },
     -- armor passives (HelldiverCustomizationPassiveBonusSettings): one table per passive, all back to back
     [TYPES.passive] = { name = 'armor passive', stride = 1, groups = true, list = {} },
+    -- vehicles (exosuits, FRVs, tanks): which entities are vehicles (VehicleComponentData), and what they
+    -- carry (MountComponentData: 5 mounts of 24 bytes: +0 entity, +16 mount name)
+    [TYPES.vehicle] = { name = 'vehicle', stride = 3704, keyed = true },
+    [TYPES.mount] = { name = 'mount', stride = 120, keyed = true },
 }
 -- the tables the panel waits for (stratagem groups are taken as they come)
 local KIND_ORDER = { T_WEAPON, T_MAGAZINE, T_ROUNDS, T_FIRE, T_PROJECTILE, T_DAMAGE, T_BEAM_WEAPON, T_BEAM,
@@ -1733,7 +1782,7 @@ end
 
 local function build_stratagems()
     for k = #weapons, 1, -1 do
-        if weapons[k].stratagem then by_hash[weapons[k].hash] = nil; table.remove(weapons, k) end
+        if weapons[k].stratagem or weapons[k].mounted then by_hash[weapons[k].hash] = nil; table.remove(weapons, k) end
     end
     local guns, sentries = {}, {}
     for _, w in ipairs(weapons) do
@@ -1772,10 +1821,21 @@ local function build_stratagems()
         end
         local drone = KINDS[TYPES.health].drones[id]
         if drone then name = drone[1] end
-        local entry = { name = name, slot = 'Stratagems', hash = id_hex(id), note = FAMILY_NOTE[family] or '',
+        -- a vehicle: the payload that is one (VehicleComponentData), of a 'VEHICLES.' stratagem (mission
+        -- objects like the Bug Plug and the President's reward Patriot call vehicles in too: not listed)
+        local vehicle, vt = nil, tables[TYPES.vehicle]
+        for _, key in ipairs(keys) do
+            if not vehicle and vt and vt.index[key] and family == 'vehicles' then vehicle = key end
+        end
+        if vehicle then
+            local V = KINDS[TYPES.vehicle]
+            name = V.ENTITIES[string.format('%08X%08X', u32(vehicle, 4), u32(vehicle, 0))] or V.TITLES[name] or name
+        end
+        local entry = { name = name, slot = vehicle and 'Mechas' or 'Stratagems', hash = id_hex(id),
+                        note = vehicle and 'Vehicle. The weapons it carries are listed under it.' or FAMILY_NOTE[family] or '',
                         rows = {}, by_id = {},
                         stratagem = { id = id, family = family, def = def, payloads = keys, nodes = nodes, guns = guns,
-                                      drone = drone } }
+                                      drone = drone, vehicle = vehicle } }
         list[#list + 1] = entry
         return entry
     end
@@ -1792,7 +1852,10 @@ local function build_stratagems()
             local family, name = pretty(text)
             named = named + 1
             local entry = add(id, name, family, {}, {}, def)
-            if entry then
+            if entry and entry.stratagem.vehicle then
+                log('vehicle ' .. entry.name .. ' (' .. text .. ', ' .. id_hex(id) .. '): entity ' ..
+                    string.format('%08X%08X', u32(entry.stratagem.vehicle, 4), u32(entry.stratagem.vehicle, 0)))
+            elseif entry then
                 entry.note = family:sub(1, 1):upper() .. family:sub(2) .. ' stratagem (' .. text .. ').'
                 if entry.stratagem.drone then
                     entry.note = 'Guard Dog backpack: the drone and the gun it carries. ' .. entry.note
@@ -1806,9 +1869,29 @@ local function build_stratagems()
         if a.stratagem.family ~= b.stratagem.family then return a.stratagem.family < b.stratagem.family end
         return a.name:lower() < b.name:lower()
     end)
+    -- the weapons each vehicle carries (its mounts), listed after it; one entry per weapon entity
+    local MOUNTS = { [0x7BDEC47B] = 'Left arm', [0x47775624] = 'Right arm', [0x23CC0657] = 'Gun', [0xCB79FA57] = 'Main gun',
+                     [0x409652FC] = 'Driver gun', [0x3ECFB64B] = 'Rack' }
+    local mt, mounted = tables[TYPES.mount], {}
     for _, entry in ipairs(list) do
         weapons[#weapons + 1] = entry
         by_hash[entry.hash] = entry
+        local at = entry.stratagem.vehicle and mt and mt.index[entry.stratagem.vehicle]
+        for m = 0, at and 4 or -1 do
+            local base = mt.copies[1] + HEADER_BYTES + at + m * 24
+            local lo, hi, label = peek4(base), peek4(base + 4), peek4(base + 16)
+            local hash = lo and hi and (lo ~= 0 or hi ~= 0) and string.format('%08X%08X', hi, lo)
+            local w = hash and mounted[hash]
+            if w then
+                w.note = w.note:gsub('%.$', '') .. ', ' .. entry.name .. '.'
+            elseif hash and not by_hash[hash] then
+                w = { name = entry.name .. ': ' .. (MOUNTS[label or 0] or ('Weapon ' .. (m + 1))), slot = 'Mechas', hash = hash,
+                      key = hash_key(hash), rows = {}, by_id = {}, mounted = true, note = 'Mounted on the ' .. entry.name .. '.' }
+                mounted[hash] = w
+                weapons[#weapons + 1] = w
+                by_hash[hash] = w
+            end
+        end
     end
     log(string.format('stratagems: %d group table(s), %d definitions, %d listed (%d from the catalog, %d named in game)',
         #stratagem_groups, total, #list, #STRATAGEMS, named))
@@ -1832,6 +1915,45 @@ local function unit_rows(entry, key, section, prefix)
     unit(TYPES.turret, 'turn_h', 'Turn speed, horizontal (deg/s)', 12, 'f32', 3600, 1, 10)
     unit(TYPES.turret, 'turn_v', 'Turn speed, vertical (deg/s)', 8, 'f32', 3600, 1, 10)
 end
+
+-- A vehicle's rows (by its entity, `key`): its health component: health +0 (i32), armor +280 (the
+-- default zone's), then each damageable zone (38 of 552 bytes from +520; +96 name, 0: unused; +216 armor,
+-- +232 health, -1: none). Zones are named from MOD.vehicle_parts (by the name's hash), else numbered.
+KINDS[TYPES.vehicle].rows = function(entry, key)
+    local t = tables[TYPES.health]
+    local at = t and t.index[key]
+    if not at then return end
+    local top = t.copies[1] + HEADER_BYTES
+    add_row(entry, 'Vehicle', 'health', 'Health', 'u32', { part('health', TYPES.health, at, 'u32', 10000000) }, 0, 1000000, 50, 500)
+    add_row(entry, 'Vehicle', 'armor', 'Armor', 'u32', { part('armor', TYPES.health, at + 280, 'u32', 100) }, 0, 10, 1, 1)
+    local n = 0
+    for z = 0, 37 do
+        local base = at + 520 + z * 552
+        local name = peek4(top + base + 96)
+        if name and name ~= 0 then
+            n = n + 1
+            local label = MOD.vehicle_parts[name] or ('Part ' .. n)
+            local id = 'zone' .. z
+            local health = read_field(field_at(TYPES.health, base + 232, 'u32', 10000000))
+            if health then
+                add_row(entry, 'Body parts', id .. '_health', label .. ' health', 'u32',
+                        { part(id .. '_health', TYPES.health, base + 232, 'u32', 10000000) }, 0, 1000000, 10, 100)
+            end
+            add_row(entry, 'Body parts', id .. '_armor', label .. ' armor', 'u32',
+                    { part(id .. '_armor', TYPES.health, base + 216, 'u32', 100) }, 0, 10, 1, 1)
+        end
+    end
+end
+
+-- names: by the stratagem's debug name (as `pretty` gives it), or by the vehicle's entity (exosuits whose
+-- debug names do not say which they are); MOUNTS: a mount's label by its name
+KINDS[TYPES.vehicle].TITLES = {
+    ['Bastion(tank)'] = 'TD-220 Bastion MK XVI', ['Storm(tank)'] = 'TD-110 Maelstrom',
+    ['Fast Recon Vehicle (FRV)'] = 'M-102 Gunner FRV', ['Fast Recon Vehicle (Ramming Flamethrower)'] = 'M-104 Incinerator FRV',
+    ['Fast Recon Vehicle (Resupply Auto Turret)'] = 'M-103 Supply FRV', ['Combat Walker Lumberer'] = 'EXO-51 Lumberer Exosuit',
+    ['Combat Walker Breakthrough'] = 'EXO-55 Breakthrough Exosuit', ['Combat Walker Emancipator'] = 'EXO-49 Emancipator Exosuit',
+    ['Combat Walker Patriot'] = 'EXO-45 Patriot Exosuit' }
+KINDS[TYPES.vehicle].ENTITIES = { ['79E4B3D2DA5E45E3'] = 'EXO-45 Patriot Exosuit', ['C2D449ECF7FACAB1'] = 'EXO-49 Emancipator Exosuit' }
 
 local function resolve_stratagem(entry)
     local s = entry.stratagem
@@ -1885,6 +2007,7 @@ local function resolve_stratagem(entry)
             end
         end
     end
+    if s.vehicle then KINDS[TYPES.vehicle].rows(entry, s.vehicle); return end
     -- a Guard Dog: its drone (health +0, spotting range +0, target search interval +0 / +4), then
     -- the gun it carries
     if s.drone then
@@ -2024,10 +2147,11 @@ local function resolve_some(progress, deadline)
     end
     if progress.next <= #weapons then return false end
     local usable, strats = 0, 0
-    state.attachments, state.throwables, state.passives = 0, 0, 0
+    state.attachments, state.throwables, state.passives, state.vehicles = 0, 0, 0, 0
     for _, weapon in ipairs(weapons) do
         if #weapon.rows > 0 then
-            if weapon.stratagem then strats = strats + 1
+            if weapon.stratagem and weapon.stratagem.vehicle then state.vehicles = state.vehicles + 1
+            elseif weapon.stratagem or weapon.mounted then strats = strats + (weapon.mounted and 0 or 1)
             elseif weapon.attachment then state.attachments = (state.attachments or 0) + 1
             elseif weapon.slot == 'Throwables' then state.throwables = (state.throwables or 0) + 1
             elseif weapon.passive then state.passives = state.passives + 1
@@ -2260,7 +2384,8 @@ local function prepare(deadline)
         end
     end
     set_status('ready', state.weapons .. ' weapons, ' .. (state.throwables or 0) .. ' throwables, ' ..
-               (state.stratagems or 0) .. ' stratagems, ' .. (state.attachments or 0) .. ' attachments and ' ..
+               (state.stratagems or 0) .. ' stratagems, ' .. (state.vehicles or 0) .. ' vehicles, ' ..
+               (state.attachments or 0) .. ' attachments and ' ..
                (state.passives or 0) .. ' armor passives editable; ' ..
                state.applied .. ' saved value(s) applied' ..
                (#pending > 0 and (', ' .. #pending .. ' waiting') or '') ..
@@ -2476,7 +2601,7 @@ local ui = { open = false, tab = 'Primary', page = 1, row = 1, scroll = 1, weapo
              editing = nil, confirm = nil,    -- a preset name being typed; an overwrite / delete to confirm
              search = { text = '', active = false },    -- the list's search (active: being typed)
              value = nil }   -- a value being typed: { n = row, weapon, text, fresh (the first key replaces it) }
-local TABS = { 'Primary', 'Secondary', 'Support', 'Throwables', 'Stratagems', 'Attachments', 'Armors', 'Presets' }
+local TABS = { 'Primary', 'Secondary', 'Support', 'Throwables', 'Stratagems', 'Mechas', 'Attachments', 'Armors', 'Presets' }
 local LIST_ROWS = 27
 local W, H = 1000, 980       -- panel size in its own units
 
