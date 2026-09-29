@@ -3838,14 +3838,18 @@ function cursor.give_input(now)
     return false
 end
 
--- The keyboard reaches the game as window messages, not raw input. A small native filter goes in
--- front of the game window's procedure (installed once, never removed: other mods may chain after
--- it): while its flag is set it drops key presses and typed characters (WM_KEYDOWN, WM_CHAR,
+-- The keyboard and the mouse buttons reach the game as window messages, not raw input. A small native
+-- filter goes in front of the game window's procedure (installed once, never removed: other mods may
+-- chain after it): while its flag is set it drops key presses and typed characters (WM_KEYDOWN, WM_CHAR,
 -- WM_DEADCHAR, WM_UNICHAR) and passes everything else, key releases included (no key can stick), to
 -- the window's own procedure. It runs on the window's thread without Lua. While set it also keeps the
--- mouse wheel (WM_MOUSEWHEEL: its turns added up for the panel's scrolling). Each install gets its own
--- block: +0 flag, +4 key presses seen, +8 blocked, +12 wheel turns (120 a notch), +16 previous
--- procedure, +24 CallWindowProcW, code at +64.
+-- mouse wheel (WM_MOUSEWHEEL: its turns added up for the panel's scrolling) and drops mouse button presses
+-- and double clicks (left, right, middle, X1, X2). A button's release reaches the game only when its press
+-- did (a bit per button: a button held when the panel opens is let go in the game; a click on the panel
+-- never ends up as a click in a menu after it closes). Each install gets its own block: +0 flag, +4 key
+-- presses seen, +8 blocked, +12 wheel turns (120 a notch), +16 previous procedure, +24 CallWindowProcW,
+-- +32 buttons the game has seen pressed, +36 button messages blocked, +48 per mouse message
+-- (WM_LBUTTONDOWN + n): kind * 16 + button (kind 1 press, 2 release; button 7: X, from the message), code at +64.
 cursor.keys = { blocks = {} }
 
 function cursor.key_filter(window)
@@ -3864,24 +3868,31 @@ function cursor.key_filter(window)
     local a = tonumber(ffi.cast('uintptr_t', block))
     local code = { 0x49, 0xBA }                              -- mov r10, block
     for k = 0, 7 do code[#code + 1] = math.floor(a / 256 ^ k) % 256 end
+    -- count WM_KEYDOWN; WM_xBUTTONDOWN / DBLCLK / UP: press -> blocked while set, else noted and passed;
+    -- release -> passed if its press was, else blocked; then (while set) the wheel, then the keys; pass:
+    -- CallWindowProcW(previous, window, msg, w, l). (Assembled from filter_asm.py.)
     for _, byte in ipairs({
-        0x81, 0xFA, 0x00, 0x01, 0x00, 0x00, 0x75, 0x04,      -- cmp edx, WM_KEYDOWN; jne +4
-        0x41, 0xFF, 0x42, 0x04,                              -- inc dword [r10+4]   (key presses seen)
-        0x41, 0x83, 0x3A, 0x00, 0x74, 0x3E,                  -- cmp dword [r10], 0; je pass
-        0x81, 0xFA, 0x0A, 0x02, 0x00, 0x00, 0x75, 0x0D,      -- cmp edx, WM_MOUSEWHEEL; jne +13
-        0x44, 0x89, 0xC0, 0xC1, 0xF8, 0x10,                  -- eax = wheel delta (high word of w, signed)
-        0x41, 0x01, 0x42, 0x0C, 0x31, 0xC0, 0xC3,            -- add [r10+12], eax; return 0
-        0x81, 0xFA, 0x00, 0x01, 0x00, 0x00, 0x74, 0x1A,      -- WM_KEYDOWN -> block
-        0x81, 0xFA, 0x02, 0x01, 0x00, 0x00, 0x74, 0x12,      -- WM_CHAR
-        0x81, 0xFA, 0x03, 0x01, 0x00, 0x00, 0x74, 0x0A,      -- WM_DEADCHAR
-        0x81, 0xFA, 0x09, 0x01, 0x00, 0x00, 0x74, 0x02,      -- WM_UNICHAR
-        0xEB, 0x07,                                          -- jmp pass
-        0x41, 0xFF, 0x42, 0x08, 0x31, 0xC0, 0xC3,            -- block: inc dword [r10+8]; return 0
-        0x48, 0x83, 0xEC, 0x38,                              -- pass: CallWindowProcW(previous, window, msg, w, l)
-        0x4C, 0x89, 0x4C, 0x24, 0x20, 0x4D, 0x89, 0xC1, 0x41, 0x89, 0xD0, 0x48, 0x89, 0xCA,
-        0x49, 0x8B, 0x4A, 0x10, 0x41, 0xFF, 0x52, 0x18,
-        0x48, 0x83, 0xC4, 0x38, 0xC3,
+        0x81, 0xFA, 0x00, 0x01, 0x00, 0x00, 0x75, 0x04, 0x41, 0xFF, 0x42, 0x04, 0x8D, 0x82, 0xFF, 0xFD,
+        0xFF, 0xFF, 0x83, 0xF8, 0x0C, 0x77, 0x47, 0x45, 0x0F, 0xB6, 0x5C, 0x02, 0x30, 0x44, 0x89, 0xD8,
+        0xC1, 0xE8, 0x04, 0x74, 0x39, 0x41, 0x83, 0xE3, 0x07, 0x41, 0x83, 0xFB, 0x07, 0x75, 0x0F, 0x4D,
+        0x89, 0xC3, 0x49, 0xC1, 0xEB, 0x10, 0x41, 0x83, 0xE3, 0x03, 0x41, 0x83, 0xC3, 0x02, 0x83, 0xF8,
+        0x02, 0x74, 0x0D, 0x41, 0x83, 0x3A, 0x00, 0x75, 0x0E, 0x45, 0x0F, 0xAB, 0x5A, 0x20, 0xEB, 0x52,
+        0x45, 0x0F, 0xB3, 0x5A, 0x20, 0x72, 0x4B, 0x41, 0xFF, 0x42, 0x24, 0x31, 0xC0, 0xC3, 0x41, 0x83,
+        0x3A, 0x00, 0x74, 0x3E, 0x81, 0xFA, 0x0A, 0x02, 0x00, 0x00, 0x75, 0x0D, 0x44, 0x89, 0xC0, 0xC1,
+        0xF8, 0x10, 0x41, 0x01, 0x42, 0x0C, 0x31, 0xC0, 0xC3, 0x81, 0xFA, 0x00, 0x01, 0x00, 0x00, 0x74,
+        0x1A, 0x81, 0xFA, 0x02, 0x01, 0x00, 0x00, 0x74, 0x12, 0x81, 0xFA, 0x03, 0x01, 0x00, 0x00, 0x74,
+        0x0A, 0x81, 0xFA, 0x09, 0x01, 0x00, 0x00, 0x74, 0x02, 0xEB, 0x07, 0x41, 0xFF, 0x42, 0x08, 0x31,
+        0xC0, 0xC3, 0x48, 0x83, 0xEC, 0x38, 0x4C, 0x89, 0x4C, 0x24, 0x20, 0x4D, 0x89, 0xC1, 0x41, 0x89,
+        0xD0, 0x48, 0x89, 0xCA, 0x49, 0x8B, 0x4A, 0x10, 0x41, 0xFF, 0x52, 0x18, 0x48, 0x83, 0xC4, 0x38,
+        0xC3,
     }) do code[#code + 1] = byte end
+    for k, kind in ipairs({ 0x10, 0x20, 0x10, 0x11, 0x21, 0x11, 0x12, 0x22, 0x12, 0x00, 0x17, 0x27, 0x17 }) do
+        base[47 + k] = kind
+    end
+    -- the buttons down now: the game has seen them pressed
+    for bit, vk in ipairs({ 0x01, 0x02, 0x04, 0x05, 0x06 }) do
+        if user.GetAsyncKeyState(vk) < 0 then ffi.cast('uint32_t *', block)[8] = ffi.cast('uint32_t *', block)[8] + 2 ^ (bit - 1) end
+    end
     for k, byte in ipairs(code) do base[63 + k] = byte end
     kernel.FlushInstructionCache(kernel.GetCurrentProcess(), base + 64, #code)
     local entry = ffi.cast('intptr_t', base + 64)
@@ -3903,14 +3914,17 @@ function cursor.block_keys(window, on)
             return
         end
     end
-    local seen, blocked = 0, 0
+    local seen, blocked, clicks = 0, 0, 0
     for _, b in ipairs(keys.blocks) do
         b.flag[0] = on and 1 or 0
-        seen, blocked = seen + b.flag[1], blocked + b.flag[2]
+        seen, blocked, clicks = seen + b.flag[1], blocked + b.flag[2], clicks + b.flag[9]
     end
     if not on and #keys.blocks > 0 then
         keys.reports = (keys.reports or 0) + 1
-        if keys.reports <= 3 then log('input: key presses the game window got: ' .. seen .. ', blocked while open: ' .. blocked) end
+        if keys.reports <= 3 then
+            log('input: key presses the game window got: ' .. seen .. ', blocked while open: ' .. blocked ..
+                '; mouse button messages blocked: ' .. clicks)
+        end
     end
     if not keys.modules then
         keys.modules = true
