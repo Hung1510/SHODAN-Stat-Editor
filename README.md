@@ -126,7 +126,9 @@ The **Settings** button at the bottom right of the panel opens its options:
 - **Apply my changes**: turn it off to play with the game's own values; your changes are kept
   and come back when you turn it on.
 - **Panel size**, **side** and **background opacity**.
-- **Ask before Reset all**, and **Remember last tab and weapon**.
+- **Remember last tab and weapon**.
+- **Reset all values**: every change of the current setup back to the game's values (asks
+  "Sure?" first; click again to confirm).
 
 The page also has the mod's version, a link to this page and the log file's location.
 

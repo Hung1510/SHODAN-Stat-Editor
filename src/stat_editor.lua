@@ -2077,9 +2077,9 @@ local config_dirty_at = nil
 -- The Settings page's choices, saved in config.txt with the changes. changes: apply the changes
 -- (off: every value is the game's, the changes are kept); block_input: the game gets no keyboard /
 -- mouse input while the panel is open; size: panel height, % of the screen's; side: 'left' / 'right';
--- opacity: background, %; confirm_reset: Reset all asks twice; remember: reopen on the last tab / weapon.
+-- opacity: background, %; remember: reopen on the last tab / weapon.
 local settings = { changes = true, block_input = true, size = 80, side = 'right', opacity = 90,
-                   confirm_reset = true, remember = true, last_tab = nil, last_weapon = nil,
+                   remember = true, last_tab = nil, last_weapon = nil,
                    GITHUB = 'https://github.com/SHODAN-HORAI/SHODAN-Stat-Editor',
                    RANGE = { size = { 50, 100 }, opacity = { 10, 100 } } }
 
@@ -2113,7 +2113,7 @@ local function save_config()
     local function onoff(v) return v and 'on' or 'off' end
     for _, line in ipairs({ 'changes ' .. onoff(settings.changes), 'block_input ' .. onoff(settings.block_input),
                             'panel_size ' .. settings.size, 'panel_side ' .. settings.side,
-                            'panel_opacity ' .. settings.opacity, 'confirm_reset ' .. onoff(settings.confirm_reset),
+                            'panel_opacity ' .. settings.opacity,
                             'remember ' .. onoff(settings.remember) }) do
         lines[#lines + 1] = line
     end
@@ -2144,7 +2144,7 @@ local function load_config()
         local key = line:match('^%s*hotkey%s+(%S+)')
         if key then hotkey_name = key end
         local name, value = line:match('^%s*([%a_]+)%s+(%S+)%s*$')
-        if name == 'changes' or name == 'block_input' or name == 'confirm_reset' or name == 'remember' then
+        if name == 'changes' or name == 'block_input' or name == 'remember' then
             settings[name] = value ~= 'off'
         elseif (name == 'panel_size' or name == 'panel_opacity') and tonumber(value) then
             settings.set_percent(name:sub(7), tonumber(value))
@@ -3134,9 +3134,7 @@ local function draw(width, height)
         button('tab:' .. tab, tab, tab_x, 52, w, 32, true, ui.tab == tab)
         tab_x = tab_x + w + 5
     end
-    button('reset_weapon', ui.weapon and ui.weapon.passive and 'Reset passive' or 'Reset weapon', W - 16 - 96 - 8 - 124, 52, 124, 32, ui.weapon ~= nil and modified(ui.weapon))
-    local sure_reset = ui.confirm and ui.confirm.kind == 'reset_all'
-    button('reset_all', sure_reset and 'Sure?' or 'Reset all', W - 16 - 96, 52, 96, 32, #overrides > 0, sure_reset)
+    button('reset_weapon', ui.weapon and ui.weapon.passive and 'Reset passive' or 'Reset weapon', W - 16 - 124, 52, 124, 32, ui.weapon ~= nil and modified(ui.weapon))
 
     -- a list's scroll bar (the weapon list, or the full presets): a thin track between the list and the
     -- line that parts the panel's halves, shown when the list is longer than LIST_ROWS
@@ -3317,8 +3315,11 @@ local function draw(width, height)
         percent('Panel size', 'size')
         choice('Panel side', 'side', { { 'left', 'Left' }, { 'right', 'Right' } }, settings.side)
         percent('Background opacity', 'opacity')
-        choice('Ask before Reset all', 'confirm_reset', ONOFF, onoff(settings.confirm_reset))
         choice('Remember last tab and weapon', 'remember', ONOFF, onoff(settings.remember))
+        local sure_reset = ui.confirm and ui.confirm.kind == 'reset_all'
+        button('reset_all', sure_reset and 'Sure?' or 'Reset all values', x0, y, 188, 28, #overrides > 0, sure_reset)
+        text('Resets all values from the current preset to default.', x0 + 16, y + 30, 14, MUTED, W - x0 - 40)
+        y = y + 50
         y = y + 16
         rect(x0, y, W - x0 - 16, 1, color(70, 82, 94), 951)
         y = y + 14
@@ -3515,7 +3516,7 @@ local function click(key)
         local name, value = arg:match('^([%w_]+):?(.*)$')
         if name == 'bind' then ui.binding = not ui.binding or nil
         elseif name == 'changes' then settings.set_changes(value == 'on')
-        elseif name == 'block_input' or name == 'confirm_reset' or name == 'remember' then settings[name] = value == 'on'
+        elseif name == 'block_input' or name == 'remember' then settings[name] = value == 'on'
         elseif (name == 'size' or name == 'opacity') and (value == 'up' or value == 'down') then
             local v = settings[name]
             settings.set_percent(name, value == 'up' and math.floor(v / 5) * 5 + 5 or math.ceil(v / 5) * 5 - 5)
@@ -3536,7 +3537,7 @@ local function click(key)
     elseif kind == 'weapon' then select_weapon(by_hash[arg])
     elseif kind == 'page' then ui.page = math.max(1, ui.page + (arg == 'next' and LIST_ROWS or -LIST_ROWS))
     elseif kind == 'reset_all' then
-        if settings.confirm_reset and not (ui.confirm and ui.confirm.kind == 'reset_all') then
+        if not (ui.confirm and ui.confirm.kind == 'reset_all') then
             ui.confirm = { kind = 'reset_all', till = api.now() + 3 }
         else
             ui.confirm = nil
