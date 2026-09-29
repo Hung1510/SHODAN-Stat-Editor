@@ -938,7 +938,8 @@ local T_HEAT, T_SPRAY, T_STATUS, T_MELEE = 0x4C981CD9, 0x8E551126, 0xC63E0B22, 0
 local TYPES = { arc_weapon = 0xB87BA9ED, arc = 0xAFDF0267, health = 0xB3915DE3, sensor = 0x14729B6A, detector = 0xFF67A367,
                 turret = 0x1EBA7593, custom = 0xEBA8F3D0, items = 0x1E604234, deltas = 0x683E604F,
                 throwable = 0xAF16BCB5, explosive = 0xF5CF9B8C, sticky = 0x9AF175A4, passive = 0x63CE0FEB,
-                vehicle = 0xEAEB2B0D, mount = 0x3845B1E0 }
+                vehicle = 0xEAEB2B0D, mount = 0x3845B1E0, shield = 0x5154DB66,
+                rack = 0xA98BB156 }
 local KINDS = {
     [T_WEAPON] = { name = 'weapon', stride = 1232, keyed = true },
     [T_MAGAZINE] = { name = 'magazine', stride = 160, keyed = true },
@@ -999,6 +1000,11 @@ local KINDS = {
     -- carry (MountComponentData: 5 mounts of 24 bytes: +0 entity, +16 mount name)
     [TYPES.vehicle] = { name = 'vehicle', stride = 3704, keyed = true },
     [TYPES.mount] = { name = 'mount', stride = 120, keyed = true },
+    -- energy shields (ShieldComponentData)
+    [TYPES.shield] = { name = 'shield', stride = 344, keyed = true },
+    -- hellpod racks (HellpodRackComponentData): a backpack stratagem's pod; 8 slots of 64 bytes, +0 the
+    -- entity each carries
+    [TYPES.rack] = { name = 'hellpod rack', stride = 568, keyed = true },
 }
 -- the tables the panel waits for (stratagem groups are taken as they come)
 local KIND_ORDER = { T_WEAPON, T_MAGAZINE, T_ROUNDS, T_FIRE, T_PROJECTILE, T_DAMAGE, T_BEAM_WEAPON, T_BEAM,
@@ -1955,6 +1961,56 @@ KINDS[TYPES.vehicle].TITLES = {
     ['Combat Walker Patriot'] = 'EXO-45 Patriot Exosuit' }
 KINDS[TYPES.vehicle].ENTITIES = { ['79E4B3D2DA5E45E3'] = 'EXO-45 Patriot Exosuit', ['C2D449ECF7FACAB1'] = 'EXO-49 Emancipator Exosuit' }
 
+-- The player's shields, by the entity listed (a stratagem's payload, a throwable): the energy shield
+-- (ShieldComponentData: +0 radius, +76 capacity, +88 recharge delay, +92 recharge delay once broken,
+-- +96 recharge rate, +100 charge it comes back with) and the bodies with health (health component:
+-- health +0, armor +280, durable ratio +268 and each named zone's +204).
+KINDS[TYPES.shield].OF = {
+    ['12C8D71AC3897A5C'] = { shield = '12C8D71AC3897A5C' },                                         -- SH-32 Shield Generator Pack
+    ['A4E796F84801B40A'] = { shield = 'B56FA3F5510000AB',                                           -- SH-51 Directional Shield
+                             bodies = { { 'A4E796F84801B40A', 'Backpack' }, { 'B56FA3F5510000AB', 'Shield emitter' } } },
+    ['967ED15E0BAE363B'] = { bodies = { { '967ED15E0BAE363B', 'Ballistic shield' } } },            -- SH-20 Ballistic Shield Backpack
+    ['ED13DDC480EC6910'] = { shield = 'ED13DDC480EC6910', bodies = { { 'ED13DDC480EC6910', 'Generator' } } },   -- FX-12 Relay
+    ['C91FB921947AD273'] = { shield = '1B9AC59697006337' },                                         -- G/SH-39 Shield
+    ['1B9AC59697006337'] = { shield = '1B9AC59697006337' },
+}
+KINDS[TYPES.shield].rows = function(entry, hex)
+    local of = KINDS[TYPES.shield].OF[hex]
+    if not of then return false end
+    local st, ht = tables[TYPES.shield], tables[TYPES.health]
+    local at = of.shield and st and st.index[hash_key(of.shield)]
+    if at then
+        local function r(id, label, offset, max, small, big)
+            add_row(entry, 'Shield', id, label, 'f32', { part(id, TYPES.shield, at + offset, 'f32', 1000000) }, 0, max, small, big)
+        end
+        r('shield_capacity', 'Shield capacity', 76, 1000000, 50, 250)
+        if (read_field(field_at(TYPES.shield, at, 'f32', 1000)) or 0) > 0 then r('shield_radius', 'Radius (m)', 0, 200, 0.1, 1) end
+        r('shield_delay', 'Recharge delay (s)', 88, 600, 1, 5)
+        r('shield_broken', 'Recharge delay once broken (s)', 92, 600, 1, 5)
+        r('shield_rate', 'Recharge rate (per s)', 96, 1000000, 10, 50)
+        r('shield_restart', 'Charge when it comes back', 100, 1000000, 10, 50)
+    end
+    for k, b in ipairs(of.bodies or {}) do
+        local hat = ht and ht.index[hash_key(b[1])]
+        if hat then
+            local p = 'body' .. k .. '_'
+            add_row(entry, b[2], p .. 'health', 'Health', 'u32', { part(p .. 'health', TYPES.health, hat, 'u32', 10000000) }, 0, 1000000, 50, 250)
+            add_row(entry, b[2], p .. 'armor', 'Armor', 'u32', { part(p .. 'armor', TYPES.health, hat + 280, 'u32', 100) }, 0, 10, 1, 1)
+            if (read_field(field_at(TYPES.health, hat + 268, 'f32', 1)) or 0) > 0 then
+                local parts = { part(p .. 'durable', TYPES.health, hat + 268, 'f32', 1) }
+                for z = 0, 37 do
+                    local base = hat + 520 + z * 552
+                    if (peek4(ht.copies[1] + HEADER_BYTES + base + 96) or 0) ~= 0 then
+                        parts[#parts + 1] = part(p .. 'durable_z' .. z, TYPES.health, base + 204, 'f32', 1)
+                    end
+                end
+                add_row(entry, b[2], p .. 'durable', 'Durable ratio (0-1)', 'f32', parts, 0, 1, 0.05, 0.1)
+            end
+        end
+    end
+    return true
+end
+
 local function resolve_stratagem(entry)
     local s = entry.stratagem
     local def = s.def
@@ -2008,6 +2064,15 @@ local function resolve_stratagem(entry)
         end
     end
     if s.vehicle then KINDS[TYPES.vehicle].rows(entry, s.vehicle); return end
+    -- a shield (the Shield Generator Relay; a backpack, in its hellpod rack's first slot)
+    local rt = tables[TYPES.rack]
+    for _, key in ipairs(s.payloads) do
+        local rack = rt and rt.index[key]
+        local carried = rack and api.read(rt.copies[1] + HEADER_BYTES + rack, 8)
+        for _, k in ipairs({ key, carried }) do
+            if KINDS[TYPES.shield].rows(entry, string.format('%08X%08X', u32(k, 4), u32(k, 0))) then return end
+        end
+    end
     -- a Guard Dog: its drone (health +0, spotting range +0, target search interval +0 / +4), then
     -- the gun it carries
     if s.drone then
@@ -2048,6 +2113,7 @@ local function resolve_throwable(entry)
         add_row(entry, 'Throwable', 'throw_distance', 'Max throw distance (m)', 'f32',
                 { part('throw_distance', TYPES.throwable, th + 16, 'f32', 100000) }, 0, 200, 0.5, 5)
     end
+    KINDS[TYPES.shield].rows(entry, entry.hash)   -- the G/SH-39's shield
     local sticky = record(TYPES.sticky)
     local hit = sticky and damage(read_field(field_at(TYPES.sticky, sticky + 44, 'u32', 100000)))
     if hit then
