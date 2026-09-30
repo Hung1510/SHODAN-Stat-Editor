@@ -963,14 +963,7 @@ local KINDS = {
     [T_STATUS] = { name = 'status effect', stride = 152, tail = true, names = { [5] = 'Burning', [32] = 'Heavy burning', [42] = 'Gas', [43] = 'Gas' } },
     [TYPES.arc_weapon] = { name = 'arc weapon', stride = 80, keyed = true },
     [TYPES.arc] = { name = 'arc', stride = 104 },
-    -- drones: the Guard Dog stratagems (by stratagem id) -> name, drone entity, its gun entity.
-    -- Nothing in the settings links a Guard Dog backpack to its drone, so they are listed here.
-    [TYPES.health] = { name = 'health', stride = 22096, keyed = true, drones = {
-        [485866824] = { 'AX/AR-23 "Guard Dog"', 'A0FF2F9A0CA6992A', 'A32621E3BDE13379' },
-        [951988742] = { 'AX/LAS-5 "Guard Dog" Rover', '5BEEC97F4C7F4AE9', '2C66C201B2543D2C' },
-        [5185868] = { 'AX/TX-13 "Guard Dog" Dog Breath', 'B9BAF571FC8F9959', 'B729A2BA153BCAED' },
-        [1125307795] = { 'AX/FLAM-75 "Guard Dog" Hot Dog', '979E9BC6D48D1FC6', '65CD4325BA23F3C6' },
-        [1692135420] = { 'AX/ARC-3 "Guard Dog" K-9', '4B071633584E4594', 'A0532C3616528CBF' } },
+    [TYPES.health] = { name = 'health', stride = 22096, keyed = true,
         -- units: sentries / emplacements whose body is not their gun (gun -> body)
         units = { ['1D5943301A29C940'] = '0C8257D1C0255593' },
         -- stratagem id -> sentry gun, for sentries whose stratagem drops a body the panel does not list
@@ -1011,7 +1004,8 @@ local KINDS = {
         { 'arc_splits', 'Arc splits', 104, arc = true }, { 'arc_chains', 'Arc chains', 112, arc = true } } },
     -- backpacks, by the entity a backpack stratagem's hellpod carries: jump / hover packs
     -- (JumppackComponentData, with RechargeComponentData), the Warp Pack (DisplacementComponentData)
-    -- and charges (DepositComponentData: the Supply Pack's supplies, the Guard Dogs', the Hellbomb's)
+    -- and charges (DepositComponentData: the Supply Pack's supplies, the Guard Dogs', the Hellbomb's;
+    -- +24 a Guard Dog's drone entity)
     [TYPES.jumppack] = { name = 'jump pack', stride = 280, keyed = true },
     [TYPES.recharge] = { name = 'recharge', stride = 4, keyed = true },
     [TYPES.warp] = { name = 'warp pack', stride = 632, keyed = true },
@@ -1942,6 +1936,27 @@ local function build_stratagems()
     for k = #weapons, 1, -1 do
         if weapons[k].stratagem or weapons[k].mounted then by_hash[weapons[k].hash] = nil; table.remove(weapons, k) end
     end
+    -- A Guard Dog, from its stratagem's payloads: its hellpod rack carries the backpack (first slot, +0),
+    -- whose charges (DepositComponentData) name the drone (+24); the drone's first mount (+0) is its gun.
+    -- Returns { drone = key, gun = key or nil }, or nil when no payload leads to a drone.
+    local function drone_of(keys)
+        local rt, dt, mt = tables[TYPES.rack], tables[TYPES.deposit], tables[TYPES.mount]
+        if not rt or not dt then return nil end
+        local function entity(t, at)
+            local k = api.read(t.copies[1] + HEADER_BYTES + at, 8)
+            if k and #k == 8 and (u32(k, 0) ~= 0 or u32(k, 4) ~= 0) then return k end
+        end
+        for _, key in ipairs(keys) do
+            local rack = rt.index[key]
+            local pack = rack and entity(rt, rack)
+            local deposit = pack and dt.index[pack]
+            local drone = deposit and entity(dt, deposit + 24)
+            if drone then
+                local mount = mt and mt.index[drone]
+                return { drone = drone, gun = mount and entity(mt, mount) }
+            end
+        end
+    end
     local guns, sentries = {}, {}
     for _, w in ipairs(weapons) do
         if w.key then guns[w.key] = true end
@@ -1977,8 +1992,7 @@ local function build_stratagems()
             log('stratagem ' .. id_hex(id) .. ': cooldown on ' .. sentry.name)
             return nil
         end
-        local drone = KINDS[TYPES.health].drones[id]
-        if drone then name = drone[1] end
+        local drone = family == 'backpack' and drone_of(keys) or nil
         -- a vehicle: the payload that is one (VehicleComponentData), of a 'VEHICLES.' stratagem (mission
         -- objects like the Bug Plug and the President's reward Patriot call vehicles in too: not listed)
         local vehicle, vt = nil, tables[TYPES.vehicle]
@@ -2016,8 +2030,11 @@ local function build_stratagems()
                     string.format('%08X%08X', u32(entry.stratagem.vehicle, 4), u32(entry.stratagem.vehicle, 0)))
             elseif entry then
                 entry.note = family:sub(1, 1):upper() .. family:sub(2) .. ' stratagem (' .. text .. ').'
-                if entry.stratagem.drone then
+                local d = entry.stratagem.drone
+                if d then
                     entry.note = 'Guard Dog backpack: the drone and the gun it carries. ' .. entry.note
+                    local function hex8(k) return k and string.format('%08X%08X', u32(k, 4), u32(k, 0)) or 'none' end
+                    log('guard dog ' .. entry.name .. ' (' .. id_hex(id) .. '): drone ' .. hex8(d.drone) .. ', gun ' .. hex8(d.gun))
                 end
             end
         end
@@ -2177,7 +2194,10 @@ KINDS[TYPES.jumppack].TITLES = {
     ['Jumppack Backpack'] = 'LIFT-850 Jump Pack', ['Hoverpack Backpack'] = 'LIFT-860 Hover Pack',
     ['Displacement Backpack'] = 'LIFT-182 Warp Pack', ['Supply Backpack'] = 'B-1 Supply Pack',
     ['Hellbomb'] = 'B-100 Portable Hellbomb', ['Generator Pack'] = 'SH-32 Shield Generator Pack',
-    ['Ballistic Shield Backpack'] = 'SH-20 Ballistic Shield Backpack', ['Directional Energy Shield'] = 'SH-51 Directional Shield' }
+    ['Ballistic Shield Backpack'] = 'SH-20 Ballistic Shield Backpack', ['Directional Energy Shield'] = 'SH-51 Directional Shield',
+    ['Guard Dog (Drone)'] = 'AX/AR-23 "Guard Dog"', ['Laser Rifle (Drone)'] = 'AX/LAS-5 "Guard Dog" Rover',
+    ['Guard Dog Gas Projector (Drone)'] = 'AX/TX-13 "Guard Dog" Dog Breath',
+    ['Guard Dog Flamethrower (Drone)'] = 'AX/FLAM-75 "Guard Dog" Hot Dog', ['Guard Dog (Drone) Stun'] = 'AX/ARC-3 "Guard Dog" K-9' }
 KINDS[TYPES.jumppack].backpack = function(entry, key)
     if entry.backpack then return end
     entry.backpack = true
@@ -2318,8 +2338,8 @@ local function resolve_stratagem(entry)
     -- a Guard Dog: its drone (health +0, spotting range +0, target search interval +0 / +4), then
     -- the gun it carries
     if s.drone then
-        unit_rows(entry, hash_key(s.drone[2]), 'Drone', 'drone_')
-        resolve_gun(entry, hash_key(s.drone[3]))
+        unit_rows(entry, s.drone.drone, 'Drone', 'drone_')
+        if s.drone.gun then resolve_gun(entry, s.drone.gun) end
         return
     end
     -- the first payload that is a gun of its own (not a weapon listed elsewhere; strikes have
