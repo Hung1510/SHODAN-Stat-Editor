@@ -57,6 +57,11 @@ recharge is its "cool-down time after overheat".
 | Orbital Laser | Duration, tracking speed, search radius, damage tick |
 | Guard Dogs (AR-23, Rover, Dog Breath, Hot Dog, K-9) | The drone's health, spotting range and target search interval, and the gun it carries, stat for stat like a weapon |
 | Sentries and emplacements (all ten sentries, HMG and Anti-Tank Emplacements, Grenadier Battlement) | Cooldown, health, spotting range, target search interval, turret turn speed, and their weapon stat for stat (the Tesla Tower's arc included) |
+| LIFT-850 Jump Pack, LIFT-860 Hover Pack | Recharge time, launch force, takeoff duration, forward share of the launch, landing thrust force and duration, mid-air steering; the Hover Pack's hover duration |
+| LIFT-182 Warp Pack | Warp distance, reach up / down, heat per warp, cooling, safe and unsafe heat, the damage an unsafe warp does to you and its explosion |
+| Supply Pack, Portable Hellbomb, Guard Dogs | Backpack charges: capacity, at the start, from resupply |
+
+A backpack reads its values when it is called in: edit them, then call in a new one.
 
 How far a Guard Dog flies from you is decided by its behaviour in the game code, not by the data
 the panel edits, so it can't be changed. The AR-23 dog's bullet is the Liberator Penetrator's and
