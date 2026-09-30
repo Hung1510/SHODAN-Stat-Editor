@@ -936,7 +936,8 @@ local TYPES = { arc_weapon = 0xB87BA9ED, arc = 0xAFDF0267, health = 0xB3915DE3, 
                 turret = 0x1EBA7593, custom = 0xEBA8F3D0, items = 0x1E604234, deltas = 0x683E604F,
                 throwable = 0xAF16BCB5, explosive = 0xF5CF9B8C, sticky = 0x9AF175A4, passive = 0x63CE0FEB,
                 vehicle = 0xEAEB2B0D, mount = 0x3845B1E0, shield = 0x5154DB66,
-                rack = 0xA98BB156, charge = 0xEAC335A1 }
+                rack = 0xA98BB156, charge = 0xEAC335A1, jumppack = 0x54270608, recharge = 0x1F42878E,
+                warp = 0xA7813546, deposit = 0xC435BA85 }
 local KINDS = {
     [T_WEAPON] = { name = 'weapon', stride = 1232, keyed = true },
     [T_MAGAZINE] = { name = 'magazine', stride = 160, keyed = true },
@@ -1008,6 +1009,13 @@ local KINDS = {
     [TYPES.charge] = { name = 'weapon charge', stride = 216, keyed = true, MULTIPLIERS = {
         { 'speed', 'Velocity', 72 }, { 'damage', 'Damage', 80 }, { 'pen', 'Pen.', 88 }, { 'range', 'Range', 96 },
         { 'arc_splits', 'Arc splits', 104, arc = true }, { 'arc_chains', 'Arc chains', 112, arc = true } } },
+    -- backpacks, by the entity a backpack stratagem's hellpod carries: jump / hover packs
+    -- (JumppackComponentData, with RechargeComponentData), the Warp Pack (DisplacementComponentData)
+    -- and charges (DepositComponentData: the Supply Pack's supplies, the Guard Dogs', the Hellbomb's)
+    [TYPES.jumppack] = { name = 'jump pack', stride = 280, keyed = true },
+    [TYPES.recharge] = { name = 'recharge', stride = 4, keyed = true },
+    [TYPES.warp] = { name = 'warp pack', stride = 632, keyed = true },
+    [TYPES.deposit] = { name = 'backpack charges', stride = 152, keyed = true },
 }
 -- the tables the panel waits for (stratagem groups are taken as they come)
 local KIND_ORDER = { T_WEAPON, T_MAGAZINE, T_ROUNDS, T_FIRE, T_PROJECTILE, T_DAMAGE, T_BEAM_WEAPON, T_BEAM,
@@ -2000,6 +2008,7 @@ local function build_stratagems()
         local text = not known[id] and id ~= EAGLE_REARM and lo and hi and read_text(lo + hi * 4294967296)
         if text then
             local family, name = pretty(text)
+            name = family == 'backpack' and KINDS[TYPES.jumppack].TITLES[name] or name
             named = named + 1
             local entry = add(id, name, family, {}, {}, def)
             if entry and entry.stratagem.vehicle then
@@ -2155,6 +2164,93 @@ KINDS[TYPES.shield].rows = function(entry, hex)
     return true
 end
 
+-- A backpack's rows, by the entity its hellpod carries (`key`, 8 bytes):
+--   jump / hover pack: recharge +0 (RechargeComponentData); launch force +0, takeoff duration +24, forward
+--     share of the launch +32, landing thrust force +36 / duration +40, mid-air steering +60, hover
+--     duration +156 (-1: does not hover; the Hover Pack's 6 s). A pack reads them when it is called in.
+--   Warp Pack: explosion +56 (set off by an unsafe warp), warp distance +120, reach up +128 / down +132,
+--     heat: safe below +140, unsafe above +144, per warp +148, cooling per second +152; injuries of an
+--     unsafe warp: 12 of 24 bytes from +160 (+0 body part, +4 damage): head, 2 arms, 2 legs
+--   charges: +0 capacity, +4 at the start (-1: full), +8 from resupply
+-- backpack stratagems' names, by their debug names (as `pretty` gives them)
+KINDS[TYPES.jumppack].TITLES = {
+    ['Jumppack Backpack'] = 'LIFT-850 Jump Pack', ['Hoverpack Backpack'] = 'LIFT-860 Hover Pack',
+    ['Displacement Backpack'] = 'LIFT-182 Warp Pack', ['Supply Backpack'] = 'B-1 Supply Pack',
+    ['Hellbomb'] = 'B-100 Portable Hellbomb', ['Generator Pack'] = 'SH-32 Shield Generator Pack',
+    ['Ballistic Shield Backpack'] = 'SH-20 Ballistic Shield Backpack', ['Directional Energy Shield'] = 'SH-51 Directional Shield' }
+KINDS[TYPES.jumppack].backpack = function(entry, key)
+    if entry.backpack then return end
+    entry.backpack = true
+    local function at(kind)
+        local t = tables[kind]
+        return t and t.index[key]
+    end
+    local function r(section, id, label, kind, offset, storage, max, small, big, parts)
+        add_row(entry, section, id, label, storage, parts or { part(id, kind, offset, storage, 1000000) }, 0, max, small, big)
+    end
+    local jump, recharge = at(TYPES.jumppack), at(TYPES.recharge)
+    if jump then
+        local hover = (read_field(field_at(TYPES.jumppack, jump + 156, 'f32', 1000000)) or -1) > 0
+        local section = hover and 'Hover pack' or 'Jump pack'
+        if recharge then r(section, 'bp_recharge', 'Recharge time (s)', TYPES.recharge, recharge, 'f32', 600, 0.5, 2) end
+        r(section, 'bp_launch', 'Launch force', TYPES.jumppack, jump, 'f32', 1000, 1, 5)
+        r(section, 'bp_takeoff', 'Takeoff duration (s)', TYPES.jumppack, jump + 24, 'f32', 10, 0.05, 0.25)
+        r(section, 'bp_forward', 'Forward share of the launch (0-1)', TYPES.jumppack, jump + 32, 'f32', 1, 0.05, 0.1)
+        r(section, 'bp_landing', 'Landing thrust force', TYPES.jumppack, jump + 36, 'f32', 1000, 1, 5)
+        r(section, 'bp_landing_time', 'Landing thrust duration (s)', TYPES.jumppack, jump + 40, 'f32', 10, 0.05, 0.25)
+        r(section, 'bp_steer', 'Mid-air steering speed', TYPES.jumppack, jump + 60, 'f32', 100, 0.5, 2)
+        if hover then r(section, 'bp_hover', 'Hover duration (s)', TYPES.jumppack, jump + 156, 'f32', 120, 0.5, 2) end
+    end
+    local warp = at(TYPES.warp)
+    if warp then
+        local function w(id, label, offset, max, small, big)
+            r('Warp pack', id, label, TYPES.warp, warp + offset, 'f32', max, small, big)
+        end
+        w('bp_warp_range', 'Warp distance (m)', 120, 1000, 0.5, 5)
+        w('bp_warp_up', 'Reach upward (m)', 128, 100, 0.1, 1)
+        w('bp_warp_down', 'Reach downward (m)', 132, 100, 0.1, 1)
+        w('bp_warp_heat', 'Heat per warp (%)', 148, 100, 1, 5)
+        w('bp_warp_cool', 'Cooling (% per s)', 152, 100, 0.5, 2)
+        w('bp_warp_safe', 'Safe below heat (%)', 140, 100, 1, 5)
+        w('bp_warp_unsafe', 'Injures you above heat (%)', 144, 100, 1, 5)
+        local function hurt(id, label, list)
+            local parts = {}
+            for k, n in ipairs(list) do
+                local o = warp + 160 + n * 24 + 4
+                parts[k] = part(k == 1 and id or (id .. '_' .. k), TYPES.warp, o, 'f32', 1000000)
+            end
+            if read_field(parts[1].field) then
+                r('Unsafe warp: damage to you', id, label, nil, nil, 'f32', 10000, 1, 5, parts)
+            end
+        end
+        hurt('bp_warp_head', 'Head', { 0 })
+        hurt('bp_warp_arms', 'Each arm', { 1, 2 })
+        hurt('bp_warp_legs', 'Each leg', { 3, 4 })
+        local id = read_field(field_at(TYPES.warp, warp + 56, 'u32', 100000))
+        local xrow = id and id > 0 and tables[T_EXPLOSION] and tables[T_EXPLOSION].index[id]
+        if xrow then
+            local section = 'Unsafe warp: explosion'
+            local qrow = read_field(field_at(T_EXPLOSION, xrow + 4, 'u32', 100000))
+            qrow = qrow and qrow > 0 and tables[T_DAMAGE] and tables[T_DAMAGE].index[qrow]
+            if qrow then
+                damage_rows(entry, section, 'bp_warp_x_', qrow)
+                status_rows(entry, section, 'bp_warp_x_', qrow, 'blast')
+            end
+            for _, f in ipairs({ { 'inner', 'Inner radius (m)', 16 }, { 'outer', 'Outer radius (m)', 20 },
+                                 { 'shockwave', 'Shockwave radius (m)', 24 } }) do
+                r(section, 'bp_warp_x_' .. f[1], f[2], T_EXPLOSION, xrow + f[3], 'f32', 200, 0.1, 1)
+            end
+        end
+    end
+    local deposit = at(TYPES.deposit)
+    if deposit then
+        r('Backpack', 'bp_charges', 'Charges', TYPES.deposit, deposit, 'u32', 999, 1, 5)
+        local start = read_field(field_at(TYPES.deposit, deposit + 4, 'u32', 0xFFFFFFFF))
+        if start and start < 1000 then r('Backpack', 'bp_charges_start', 'Starting charges', TYPES.deposit, deposit + 4, 'u32', 999, 1, 5) end
+        r('Backpack', 'bp_charges_supply', 'Charges from resupply', TYPES.deposit, deposit + 8, 'u32', 999, 1, 5)
+    end
+end
+
 local function resolve_stratagem(entry)
     local s = entry.stratagem
     local def = s.def
@@ -2208,11 +2304,13 @@ local function resolve_stratagem(entry)
         end
     end
     if s.vehicle then KINDS[TYPES.vehicle].rows(entry, s.vehicle); return end
-    -- a shield (the Shield Generator Relay; a backpack, in its hellpod rack's first slot)
+    -- a backpack (in its hellpod rack's first slot): its own rows; a shield (the Shield Generator Relay, a
+    -- shield backpack)
     local rt = tables[TYPES.rack]
     for _, key in ipairs(s.payloads) do
         local rack = rt and rt.index[key]
         local carried = rack and api.read(rt.copies[1] + HEADER_BYTES + rack, 8)
+        if carried and #carried == 8 then KINDS[TYPES.jumppack].backpack(entry, carried) end
         for _, k in ipairs({ key, carried }) do
             if KINDS[TYPES.shield].rows(entry, string.format('%08X%08X', u32(k, 4), u32(k, 0))) then return end
         end
@@ -2312,7 +2410,7 @@ local function resolve_throwable(entry)
 end
 
 local function resolve(weapon)
-    weapon.rows, weapon.by_id, weapon.aliases = {}, {}, nil
+    weapon.rows, weapon.by_id, weapon.aliases, weapon.backpack = {}, {}, nil, nil
     if weapon.slot == 'Throwables' then resolve_throwable(weapon); return end
     if weapon.passive then KINDS[TYPES.passive].resolve(weapon); return end
     if weapon.stratagem then resolve_stratagem(weapon); return end
