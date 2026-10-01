@@ -21,9 +21,10 @@ saved, and are applied again automatically every time the game starts. Keep setu
 | Arc | Range, chain length, chain split (Arc Thrower, Blitzer, K-9 Guard Dog, Tesla Tower) |
 | Burning / Gas | How much fire or gas each hit applies (flamethrowers, Coyote, Hyena, incendiary shotguns, lasers, EAT-700, gas weapons); burn / gas damage, armor penetration and duration |
 | Fire | Fire rate (every fire mode the weapon has) |
-| Ammo | Magazine size, starting magazines, magazines from supply, max spare magazines (or rounds, for weapons loaded by the round) |
+| Ammo | Magazine size, starting magazines, magazines from supply, max spare magazines (or rounds, for weapons loaded by the round), reload time, rounds per reload and reload allowed below (clip weapons) |
 | Handling | Recoil (horizontal, vertical), spread (horizontal, vertical), sway, ergonomics |
 | Heat | Overheat threshold, heat per shot / per second, cool-down time (lasers, Quasar Cannon), heatsinks |
+| Projectile swap | The projectile the weapon fires: pick another weapon's (by name, or type its id) |
 
 Beam weapons (Scythe, Dagger, Trident, Laser Cannon, Meltagun) get their damage from their beam,
 flame weapons (Flamethrower, Torcher, Crisper, Cremator, Sterilizer) from their spray, arc weapons
@@ -57,9 +58,10 @@ recharge is its "cool-down time after overheat".
 | Orbital Laser | Duration, tracking speed, search radius, damage tick |
 | Guard Dogs (AR-23, Rover, Dog Breath, Hot Dog, K-9) | The drone's health, spotting range and target search interval, and the gun it carries, stat for stat like a weapon |
 | Sentries and emplacements (all ten sentries, HMG and Anti-Tank Emplacements, Grenadier Battlement) | Cooldown, health, spotting range, target search interval, turret turn speed, and their weapon stat for stat (the Tesla Tower's arc included) |
+| Anti-Personnel, Anti-Tank, Gas and Incendiary Minefields | Panels and mines per panel (lower only), arming time, throw velocity and spread; the mines' trigger and chain reaction delays, their explosion's damage and radii |
 | LIFT-850 Jump Pack, LIFT-860 Hover Pack | Recharge time, launch force, takeoff duration, forward share of the launch, landing thrust force and duration, mid-air steering; the Hover Pack's hover duration |
 | LIFT-182 Warp Pack | Warp distance, reach up / down, heat per warp, cooling, safe and unsafe heat, the damage an unsafe warp does to you and its explosion |
-| Supply Pack, Portable Hellbomb, Guard Dogs | Backpack charges: capacity, at the start, from resupply |
+| Supply Pack, Portable Hellbomb, Guard Dogs; the ammo backpacks of the Autocannon, Recoilless Rifle, Spear, W.A.S.P., Airburst, Maxigun, Cremator and Belt-Fed GL (on the weapon's page) | Backpack charges: capacity, at the start, from resupply |
 
 A backpack reads its values when it is called in: edit them, then call in a new one.
 
@@ -99,7 +101,7 @@ Multipliers show as the game stores them: 1 is no change, 0.5 damage taken is 50
 ## Install
 
 1. Install **Bingus Shared Loader** (v15 or newer).
-2. Download `SHODAN-Stat-Editor-v2.2.0.zip` from the [releases page](../../releases/latest).
+2. Download `SHODAN-Stat-Editor-v2.3.0.zip` from the [releases page](../../releases/latest).
 3. Install the zip with your Helldivers 2 mod manager, like any other mod package.
 
 ## Use
@@ -179,6 +181,9 @@ share the whole setup.
 - **Shared values.** Some weapons fire the same projectile or share its damage values (for
   example the Liberator, Liberator Carbine, StA-52 and Stalwart). The panel names the weapons
   that change along with the one you edit.
+- **Projectile swap.** A weapon firing another weapon's projectile deals that projectile's damage
+  and flies like it; fire rate, ammo and handling stay its own. To tune those shots, edit the
+  other weapon's values (they change for both).
 - **Variants.** Some weapons exist more than once in the game's data (a mounted copy, an
   underbarrel attachment). The list labels each one, and the panel says which copy
   you are editing.
