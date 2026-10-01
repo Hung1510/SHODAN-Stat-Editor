@@ -1855,6 +1855,14 @@ local function resolve_gun(weapon, key)
         rnd('rounds_start', 'Starting rounds', 88)
         rnd('rounds_supply', 'Rounds from supply', 84)
         rnd('rounds_max', 'Max spare rounds', 80)
+        -- +92 rounds added per reload (a clip: Autocannon 5, Veto 6; else 1, a shell at a time); +96 a reload
+        -- is allowed below this many rounds left (f32; 0: below the capacity)
+        add_row(weapon, 'Ammo', 'rounds_per_reload', 'Rounds per reload', 'u32',
+                { part('rounds_per_reload', T_ROUNDS, rounds + 92, 'u32', 100000) }, 1, 999, 1, 5)
+        if (read_field(field_at(T_ROUNDS, rounds + 96, 'f32', 100000)) or 0) > 0 then
+            add_row(weapon, 'Ammo', 'reload_below', 'Reload allowed below (rounds)', 'f32',
+                    { part('reload_below', T_ROUNDS, rounds + 96, 'f32', 100000) }, 1, 999, 1, 5)
+        end
     end
     -- reload time: the weapon's own (+56), or its magazine's (an attachment sets it over the weapon's 0).
     -- The game scales the reload animation to it; 0: the animation's own length (no scaling).
