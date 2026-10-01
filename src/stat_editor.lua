@@ -136,7 +136,7 @@ local WEAPONS = {
     { 'AR-11 Arbitrator', 'Primary', 'A8A91EB54892B6B2', 'The rifle you carry. The underbarrel shotgun is listed separately.' },
     { 'AR-11 Arbitrator (underbarrel shotgun)', 'Primary', 'B9C209B4F99B5335', 'The Arbitrator\'s underbarrel shotgun, not the rifle itself.' },
     { 'AR-2 Coyote', 'Primary', '84354339522C932D', '' },
-    { 'AR-23 Liberator', 'Primary', '968211C0033DCE64', '', 276 },
+    { 'AR-23 Liberator', 'Primary', '968211C0033DCE64', '' },
     { 'AR-23A Liberator Carbine', 'Primary', 'A7EE1EBF58FCDF1F', '' },
     { 'AR-23C Liberator Concussive', 'Primary', 'CF5F176E0E322BE1', '' },
     { 'AR-23P Liberator Penetrator', 'Primary', '43CB1033961A2276', '' },
@@ -151,7 +151,7 @@ local WEAPONS = {
     { 'DBS-2 Double Freedom', 'Primary', '72170A55A1F37FF1', '' },
     { 'FLAM-66 Torcher', 'Primary', '4FB0F8C02F55C82B', '' },
     { 'GL-15 Evictor', 'Primary', '006E44327BB953FE', '' },
-    { 'JAR-5 Dominator', 'Primary', '80F1A156D9FA1E36', '', 177 },
+    { 'JAR-5 Dominator', 'Primary', '80F1A156D9FA1E36', '' },
     { 'LAS-12 Sai', 'Primary', 'C85F576D5E086147', '' },
     { 'LAS-13 Trident', 'Primary', '3C86E871923F3970', '' },
     { 'LAS-16 Sickle', 'Primary', '8645F167B3C813A2', '' },
@@ -170,12 +170,12 @@ local WEAPONS = {
     { 'R-36 Eruptor', 'Primary', 'B6AFF2195568767F', '' },
     { 'R-4 Hyena', 'Primary', 'E5796355A8FD67E0', '' },
     { 'R-6 Deadeye', 'Primary', 'E6D932BE83729076', '' },
-    { 'R-63 Diligence', 'Primary', '03E67A19B07C6523', '', 305 },
+    { 'R-63 Diligence', 'Primary', '03E67A19B07C6523', '' },
     { 'R-63CS Diligence Counter Sniper', 'Primary', '4C786785C79D44E7', '' },
     { 'R-72 Censor', 'Primary', 'F0338468DCDB6A6C', '' },
     { 'R/40-K Hot-Shot Marksman Rifle', 'Primary', '1ABBFF60D26BA391', '' },
     { 'SG-20 Halt', 'Primary', '4E310B1FE4C52B52', '' },
-    { 'SG-225 Breaker', 'Primary', '46183B50961D1328', '', 179 },
+    { 'SG-225 Breaker', 'Primary', '46183B50961D1328', '' },
     { 'SG-225IE Breaker Incendiary', 'Primary', 'C12A34F375BD5A87', '' },
     { 'SG-225SP Breaker Spray&Pray', 'Primary', '5EBAEA70C0D060B9', '' },
     { 'SG-451 Cookout', 'Primary', 'D323DE60855898AC', '' },
@@ -185,8 +185,8 @@ local WEAPONS = {
     { 'SG-97 Sweeper', 'Primary', 'DCD1C835407EF7BA', '' },
     { 'SMG-203 Gallant', 'Primary', '186EA95DE7306B1A', '' },
     { 'SMG-32 Reprimand', 'Primary', '94BD931B5FB4EE95', '' },
-    { 'SMG-37 Defender', 'Primary', '4E4A613EB9BF5C24', 'The one you carry.', 3 },
-    { 'SMG-37 Defender (SEAF)', 'Primary', 'CA4BBEF63C869C18', 'The Defender SEAF soldiers carry. Not yours.', 3 },
+    { 'SMG-37 Defender', 'Primary', '4E4A613EB9BF5C24', 'The one you carry.' },
+    { 'SMG-37 Defender (SEAF)', 'Primary', 'CA4BBEF63C869C18', 'The Defender SEAF soldiers carry. Not yours.' },
     { 'SMG-72 Pummeler', 'Primary', '0807AEA5217E4767', '' },
     { 'SMG/FLAM-34 Stoker', 'Primary', '8A307BD1811A5FE9', 'The SMG you carry. Its underbarrel flamer is listed separately.' },
     { 'SMG/FLAM-34 Stoker (underbarrel flamer)', 'Primary', '992B6F65A5BAB53D', 'The Stoker\'s underbarrel flamer, not the SMG itself.' },
@@ -206,12 +206,12 @@ local WEAPONS = {
     { 'M6C/SOCOM Pistol', 'Secondary', '4D58C77087B774C5', '' },
     { 'P-11 Stim Pistol', 'Secondary', 'D6B1FB05B9109353', '' },
     { 'P-113 Verdict', 'Secondary', '1A437158E1B8D2A1', '' },
-    { 'P-19 Redeemer', 'Secondary', '3575AABC5F1F9326', '', 291 },
-    { 'P-2 Peacemaker', 'Secondary', '05E4E5C2DB6E44A2', '', 337 },
+    { 'P-19 Redeemer', 'Secondary', '3575AABC5F1F9326', '' },
+    { 'P-2 Peacemaker', 'Secondary', '05E4E5C2DB6E44A2', '' },
     { 'P-33 Missile Pistol', 'Secondary', '14D5D4506056C7A4', '' },
     { 'P-34 Breacher', 'Secondary', 'E91F569C2AD8AF01', '' },
     { 'P-35 Re-Educator', 'Secondary', '0B882808C6F498E8', '' },
-    { 'P-4 Senator', 'Secondary', '8D3D52A3B2F19402', '', 309 },
+    { 'P-4 Senator', 'Secondary', '8D3D52A3B2F19402', '' },
     { 'P-69 Veto', 'Secondary', 'C780BCD79547DA0F', '' },
     { 'P-72 Crisper', 'Secondary', '3F92BA65EF65CCA9', '' },
     { 'P-92 Warrant', 'Secondary', 'CF8934FF6567A42D', '' },
@@ -964,8 +964,6 @@ local KINDS = {
     [TYPES.arc_weapon] = { name = 'arc weapon', stride = 80, keyed = true },
     [TYPES.arc] = { name = 'arc', stride = 104 },
     [TYPES.health] = { name = 'health', stride = 22096, keyed = true,
-        -- units: sentries / emplacements whose body is not their gun (gun -> body)
-        units = { ['1D5943301A29C940'] = '0C8257D1C0255593' },
         -- stratagem id -> sentry gun, for sentries whose stratagem drops a body the panel does not list
         -- (Laser Cannon Sentry, Tesla Tower, Defense Wall Grenade Launcher = the Grenadier Battlement)
         sentry_ids = { [0x393E6019] = '56070F36CFFFA8A8', [0x8F349F3B] = '74599E56F72F9D7E',
@@ -1250,7 +1248,7 @@ local function hash_key(hex16)
 end
 
 for _, w in ipairs(WEAPONS) do
-    local weapon = { name = w[1], slot = w[2], hash = w[3], note = w[4] or '', override = w[5], key = hash_key(w[3]),
+    local weapon = { name = w[1], slot = w[2], hash = w[3], note = w[4] or '', key = hash_key(w[3]),
                      rows = {}, by_id = {} }
     weapons[#weapons + 1] = weapon
     by_hash[w[3]] = weapon
@@ -1354,6 +1352,36 @@ KINDS[TYPES.items].MODS = {
     { 14, 'spread_h', 'Spread multiplier (horizontal)', 0, 50, 0.05, 0.25 },
     { 16, 'spread_v', 'Spread multiplier (vertical)', 0, 50, 0.05, 0.25 },
 }
+
+-- The projectile a weapon's default attachments give its fire mode (+0), when they set one (the P-2
+-- Peacemaker's and P-19 Redeemer's ammo type): component 321, offset 0, 4 bytes; the last slot wins.
+KINDS[TYPES.custom].projectile = function(key)
+    local custom, spec, deltas, at = tables[TYPES.custom], KINDS[TYPES.items], tables[TYPES.deltas], KINDS[TYPES.deltas].layout
+    local row = custom and deltas and at and custom.index[key]
+    if not row then return nil end
+    local base, d, out = custom.copies[1] + HEADER_BYTES + row, deltas.copies[1] + HEADER_BYTES, nil
+    for s = 0, 8 do
+        local t, r = spec.find(peek4(base + s * 8 + 4))
+        local slot = t and deltas.index[api.read(t.copies[1] + HEADER_BYTES + r + 32, 8) or '']
+        if slot then
+            local count, first = peek4(d + at[1] + slot * 8) or 0, peek4(d + at[1] + slot * 8 + 4) or 0
+            local value = nil
+            for c = first, first + count - 1 do
+                if not value and peek4(d + at[2] + c * 12) == 321 then
+                    local fd, nd = peek4(d + at[2] + c * 12 + 4) or 0, peek4(d + at[2] + c * 12 + 8) or 0
+                    for x = fd, fd + nd - 1 do
+                        if peek4(d + at[3] + x * 12) == 0 and peek4(d + at[3] + x * 12 + 4) == 4 then
+                            value = peek4(d + at[4] + (peek4(d + at[3] + x * 12 + 8) or 0))
+                            break
+                        end
+                    end
+                end
+            end
+            if value and value > 0 then out = value end
+        end
+    end
+    return out
+end
 
 -- A weapon's attachments set magazine and heat values of their own over the weapon's (its slot 5 item:
 -- magazine, heatsink, canister) and modify its stats. For the weapon entity `key`: 'component:offset' ->
@@ -1594,8 +1622,8 @@ local function resolve_gun(weapon, key)
     local rounds, fire = record(T_ROUNDS), record(T_FIRE)
     if rounds then projectile = read_field(field_at(T_ROUNDS, rounds + 64, 'u32', 100000)) end
     -- the default attachments (ammo type) can set the fire mode's projectile (Peacemaker, Redeemer)
-    if (projectile == nil or projectile == 0) and weapon.key == key and weapon.override then
-        projectile = weapon.override
+    if (projectile == nil or projectile == 0) and weapon.key == key then
+        projectile = KINDS[TYPES.custom].projectile(key)
     end
     if fire and (projectile == nil or projectile == 0) then
         projectile = read_field(field_at(T_FIRE, fire, 'u32', 100000))
@@ -1922,6 +1950,19 @@ local FAMILY_NOTE = { orbital = 'Orbital strike.', eagle = 'Eagle strike. The re
 
 local function id_hex(id) return string.format('%08X%08X', 0, id) end
 
+-- A sentry's or emplacement's body, when its gun has no health of its own: the entity that mounts the
+-- gun and has health (the Grenadier Battlement's). nil: the gun is the body.
+KINDS[TYPES.health].body = function(gun)
+    local ht, mt = tables[TYPES.health], tables[TYPES.mount]
+    if not ht or not mt or ht.index[gun] then return nil end
+    for holder, at in pairs(mt.index) do
+        local mounts = ht.index[holder] and api.read(mt.copies[1] + HEADER_BYTES + at, 120)
+        for m = 0, mounts and 4 or -1 do
+            if mounts:sub(m * 24 + 1, m * 24 + 8) == gun then return holder end
+        end
+    end
+end
+
 -- 'BACKPACK. GUARD DOG (Drone)' -> 'backpack', 'Guard Dog (Drone)'
 local function pretty(debug_name)
     local family, rest = debug_name:match('^%s*([^%.]+)%.%s*(.+)$')
@@ -1962,9 +2003,9 @@ local function build_stratagems()
         if w.key then guns[w.key] = true end
         if w.slot == 'Stratagems' then
             w.sentry_defs = {}
-            local body = KINDS[TYPES.health].units[w.hash]
+            local body = KINDS[TYPES.health].body(w.key)
             sentries[w.key] = w
-            if body then sentries[hash_key(body)] = w end
+            if body then sentries[body] = w end
         end
     end
     local defs = {}
@@ -2456,8 +2497,7 @@ local function resolve(weapon)
             parts[k] = part(k == 1 and 'cooldown' or 'cooldown' .. k, def.kind, def.off + 104, 'f32', 100000)
         end
         if parts[1] then add_row(weapon, 'Stratagem', 'cooldown', 'Cooldown (s)', 'f32', parts, 0, 10000, 1, 10) end
-        local body = KINDS[TYPES.health].units[weapon.hash]
-        unit_rows(weapon, body and hash_key(body) or weapon.key, weapon.name:find('^E/') and 'Emplacement' or 'Sentry', 'unit_')
+        unit_rows(weapon, KINDS[TYPES.health].body(weapon.key) or weapon.key, weapon.name:find('^E/') and 'Emplacement' or 'Sentry', 'unit_')
     end
     resolve_gun(weapon, weapon.key)
 end
