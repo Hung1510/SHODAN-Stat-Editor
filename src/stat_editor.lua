@@ -1357,32 +1357,34 @@ KINDS[TYPES.items].MODS = {
 
 -- The projectile a weapon's default attachments give its fire mode (+0), when they set one (the P-2
 -- Peacemaker's and P-19 Redeemer's ammo type): component 321, offset 0, 4 bytes; the last slot wins.
+-- Also returns where that value sits in the deltas (payload offset).
 KINDS[TYPES.custom].projectile = function(key)
     local custom, spec, deltas, at = tables[TYPES.custom], KINDS[TYPES.items], tables[TYPES.deltas], KINDS[TYPES.deltas].layout
     local row = custom and deltas and at and custom.index[key]
     if not row then return nil end
-    local base, d, out = custom.copies[1] + HEADER_BYTES + row, deltas.copies[1] + HEADER_BYTES, nil
+    local base, d, out, out_at = custom.copies[1] + HEADER_BYTES + row, deltas.copies[1] + HEADER_BYTES, nil, nil
     for s = 0, 8 do
         local t, r = spec.find(peek4(base + s * 8 + 4))
         local slot = t and deltas.index[api.read(t.copies[1] + HEADER_BYTES + r + 32, 8) or '']
         if slot then
             local count, first = peek4(d + at[1] + slot * 8) or 0, peek4(d + at[1] + slot * 8 + 4) or 0
-            local value = nil
+            local value, value_at = nil, nil
             for c = first, first + count - 1 do
                 if not value and peek4(d + at[2] + c * 12) == 321 then
                     local fd, nd = peek4(d + at[2] + c * 12 + 4) or 0, peek4(d + at[2] + c * 12 + 8) or 0
                     for x = fd, fd + nd - 1 do
                         if peek4(d + at[3] + x * 12) == 0 and peek4(d + at[3] + x * 12 + 4) == 4 then
-                            value = peek4(d + at[4] + (peek4(d + at[3] + x * 12 + 8) or 0))
+                            value_at = at[4] + (peek4(d + at[3] + x * 12 + 8) or 0)
+                            value = peek4(d + value_at)
                             break
                         end
                     end
                 end
             end
-            if value and value > 0 then out = value end
+            if value and value > 0 then out, out_at = value, value_at end
         end
     end
-    return out
+    return out, out_at
 end
 
 -- A weapon's attachments set magazine and heat values of their own over the weapon's (its slot 5 item:
@@ -1575,7 +1577,7 @@ end
 KINDS[TYPES.charge].shots = function(at, fired)
     local list, by = {}, {}
     for s = 1, 3 do
-        local id = read_field(field_at(TYPES.charge, at + (s - 1) * 24 + 4, 'u32', 100000))
+        local id = default_of(field_at(TYPES.charge, at + (s - 1) * 24 + 4, 'u32', 100000))
         if id == 0 then id = fired end
         local prow = id and id > 0 and tables[T_PROJECTILE] and tables[T_PROJECTILE].index[id]
         if prow then
@@ -1620,21 +1622,36 @@ local function resolve_gun(weapon, key)
         end
         return lead
     end
+    -- the projectile it fires: the rounds record's (+64), else its default ammo type's (an attachment
+    -- delta on the fire mode's +0, put there when the weapon spawns: Peacemaker, Redeemer), else the fire
+    -- mode's (+0). Read as the game had them (the Projectile swap row writes them all; the stat rows stay
+    -- the weapon's own). `sources`: those fields, with the charge stages' (below), for that row.
+    local sources = {}
+    local function source(id, kind, offset, always)
+        local f = field_at(kind, offset, 'u32', 100000)
+        local own = default_of(f)
+        if own and (own > 0 or always) then sources[#sources + 1] = { id = id, field = f, own = own } end
+        return own
+    end
     local projectile = nil
     local rounds, fire = record(T_ROUNDS), record(T_FIRE)
-    if rounds then projectile = read_field(field_at(T_ROUNDS, rounds + 64, 'u32', 100000)) end
-    -- the default attachments (ammo type) can set the fire mode's projectile (Peacemaker, Redeemer)
-    if (projectile == nil or projectile == 0) and weapon.key == key then
-        projectile = KINDS[TYPES.custom].projectile(key)
+    if rounds then projectile = source('proj_rounds', T_ROUNDS, rounds + 64) end
+    if weapon.key == key then
+        local _, at = KINDS[TYPES.custom].projectile(key)
+        local own = at and source('proj_ammo', TYPES.deltas, at)
+        if (projectile == nil or projectile == 0) and own and own > 0 then projectile = own end
     end
-    if fire and (projectile == nil or projectile == 0) then
-        projectile = read_field(field_at(T_FIRE, fire, 'u32', 100000))
+    if fire then
+        -- (also when it names none: its ammo type does, and the fire mode then takes the swapped one)
+        local own = source('proj_fire', T_FIRE, fire, true)
+        if projectile == nil or projectile == 0 then projectile = own end
     end
     local prow = projectile and projectile > 0 and tables[T_PROJECTILE] and tables[T_PROJECTILE].index[projectile]
     -- charge weapons whose stages fire their own projectiles: those, not the fire mode's
     local charge = record(TYPES.charge)
     local shots = charge and KINDS[TYPES.charge].shots(charge, projectile)
     if shots then prow = nil end
+    for s = 1, charge and 3 or 0 do source('proj_c' .. s, TYPES.charge, charge + (s - 1) * 24 + 4) end
     local drow = nil
     if prow then
         local id = read_field(field_at(T_PROJECTILE, prow + 60, 'u32', 100000))
@@ -1898,8 +1915,8 @@ local function resolve_gun(weapon, key)
         for k = 1, 3 do
             local at = heat + (k - 1) * 24
             local from = default_of(field_at(T_HEAT, at, 'f32', 1000000))
-            local pid = read_field(field_at(T_HEAT, at + 4, 'u32', 100000))
-            local prow = from and from > 0 and pid and tables[T_PROJECTILE] and tables[T_PROJECTILE].index[pid]
+            local pid = from and from > 0 and source('proj_h' .. k, T_HEAT, at + 4)
+            local prow = pid and tables[T_PROJECTILE] and tables[T_PROJECTILE].index[pid]
             local did = prow and read_field(field_at(T_PROJECTILE, prow + 60, 'u32', 100000))
             local qrow = did and tables[T_DAMAGE] and tables[T_DAMAGE].index[did]
             if qrow then
@@ -1951,6 +1968,7 @@ local function resolve_gun(weapon, key)
         add_row(weapon, 'Handling', 'sway', 'Sway multiplier', 'f32', { follow(w('sway', 104), { 1 }, 1) }, 0, 100, 0.1, 0.5)
         add_row(weapon, 'Handling', 'ergonomics', 'Ergonomics', 'f32', { follow(w('ergonomics', 356), { 0 }, 0) }, 0, 1000, 1, 5)
     end
+    if weapon.key == key then KINDS[T_PROJECTILE].swap_row(weapon, sources, shots) end
 end
 
 -- ---------------------------------------------------------------- stratagems
@@ -2554,6 +2572,60 @@ local function resolve(weapon)
     resolve_gun(weapon, weapon.key)
 end
 
+-- Projectile swap (the last row of a weapon that fires projectiles): one row writing every field the
+-- weapon's projectile comes from (its rounds record, ammo type, fire mode, charge stages) with another
+-- weapon's projectile. The stat rows above stay the weapon's own projectile's. Choices:
+-- KINDS[T_PROJECTILE].choices, every listed weapon's own projectiles by name (built after resolving).
+KINDS[T_PROJECTILE].swap_row = function(weapon, sources, shots)
+    if #sources == 0 or not (weapon.projectile or shots) then return end
+    local main = nil
+    for _, src in ipairs(sources) do
+        if shots and src.id == 'proj_c' .. shots[#shots].last then main = main or src end
+        if not shots and src.own == weapon.projectile then main = main or src end
+    end
+    main = main or sources[1]
+    local parts = { { id = main.id, field = main.field } }
+    for _, src in ipairs(sources) do
+        if src ~= main then parts[#parts + 1] = { id = src.id, field = src.field } end
+    end
+    local row = add_row(weapon, 'Projectile swap', 'projectile', 'Projectile fired (id)', 'u32', parts, 1, 100000, 1, 10)
+    row.choice = true
+    row.note = function(others)
+        local spec, now, own = KINDS[T_PROJECTILE], read_field(parts[1].field), default_of(parts[1].field)
+        local shot = spec.by_id and spec.by_id[now]
+        local text = now == own and "its own. - / + : fire another weapon's"
+                     or ('fires: ' .. (shot and shot.label or ('projectile ' .. tostring(now))) .. '. The rows above stay its own')
+        if #others > 0 then text = text .. '; ammo type shared with ' .. table.concat(others, ', ', 1, math.min(2, #others)) end
+        return text
+    end
+    weapon.own_shots = {}
+    for _, shot in ipairs(shots or { { id = weapon.projectile } }) do
+        weapon.own_shots[#weapon.own_shots + 1] = { id = shot.id,
+            label = shots and (weapon.name .. ' (' .. shot.name:lower() .. ')') or weapon.name }
+    end
+end
+
+-- The choices: every own projectile once (the first weapon's name, by name), in name order.
+KINDS[T_PROJECTILE].list_choices = function()
+    local list, by = {}, {}
+    for _, w in ipairs(weapons) do
+        for _, shot in ipairs(w.own_shots or {}) do
+            if not by[shot.id] then by[shot.id] = shot; list[#list + 1] = shot end
+        end
+    end
+    table.sort(list, function(a, b) return a.label:lower() < b.label:lower() end)
+    KINDS[T_PROJECTILE].choices, KINDS[T_PROJECTILE].by_id = list, by
+end
+
+-- The projectile `n` choices on from `id` (from either end when `id` is not one).
+KINDS[T_PROJECTILE].step = function(id, n)
+    local list, at = KINDS[T_PROJECTILE].choices or {}, nil
+    for k, shot in ipairs(list) do if shot.id == id then at = k end end
+    if #list == 0 then return id end
+    at = at or (n > 0 and 0 or #list + 1)
+    return list[math.max(1, math.min(#list, at + n))].id
+end
+
 -- Resolves weapons from `next` on until the deadline; true once all are done.
 local function resolve_some(progress, deadline)
     if progress.next == 1 then
@@ -2566,6 +2638,7 @@ local function resolve_some(progress, deadline)
         if api.now() >= deadline then break end
     end
     if progress.next <= #weapons then return false end
+    KINDS[T_PROJECTILE].list_choices()
     local usable, strats = 0, 0
     state.attachments, state.throwables, state.passives, state.vehicles = 0, 0, 0, 0
     for _, weapon in ipairs(weapons) do
@@ -2602,6 +2675,7 @@ end
 -- A row's value (the mean of its parts); default = true: the game's own value instead.
 local function row_value(row, default)
     local get = default and default_of or read_field
+    if row.choice then return get(row.parts[1].field) end
     if row.span then return as_time((default and row.span_default or row.span)(), get(row.parts[1].field)) end
     local sum = 0
     for _, p in ipairs(row.parts) do
@@ -3188,6 +3262,23 @@ local function change(row, delta_sign, big, exact)
     if not weapon or current == nil then return end
     if not settings.changes then
         ui.message = { text = 'Your changes are off: turn them on in Settings to edit.', till = api.now() + 4 }
+        return
+    end
+    if row.choice then
+        -- a projectile swap: the next / previous weapon's projectile (++ / --: 10 on), or a typed id
+        local target = exact and math.floor(exact + 0.5) or KINDS[T_PROJECTILE].step(current, delta_sign * (big and 10 or 1))
+        if not (tables[T_PROJECTILE] and tables[T_PROJECTILE].index[target]) then
+            ui.message = { text = 'No projectile ' .. tostring(target) .. ' in the game.', till = api.now() + 4 }
+            return
+        end
+        if target == current then return end
+        for _, p in ipairs(row.parts) do
+            local d = default_of(p.field)
+            local ok, why = write_field(p.field, target)
+            if ok then set_override(weapon, p, unless_default(target, d))
+            else log('write refused: ' .. weapon.name .. ' ' .. p.id .. ': ' .. why) end
+        end
+        ui.version = ui.version + 1
         return
     end
     local target = exact or current + delta_sign * step_of(row, current, big)
@@ -3955,6 +4046,7 @@ local function draw(width, height)
                 if row.section ~= section then
                     section = row.section
                     local note, others = row.note or '', shared_with(weapon, row)
+                    if type(note) == 'function' then note, others = note(others), {} end
                     if note == '' and #others > 0 then
                         note = 'shared with ' .. table.concat(others, ', ', 1, math.min(3, #others)) ..
                                (#others > 3 and (' +' .. (#others - 3)) or '')
