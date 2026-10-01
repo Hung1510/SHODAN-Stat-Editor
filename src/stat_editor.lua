@@ -937,7 +937,8 @@ local TYPES = { arc_weapon = 0xB87BA9ED, arc = 0xAFDF0267, health = 0xB3915DE3, 
                 throwable = 0xAF16BCB5, explosive = 0xF5CF9B8C, sticky = 0x9AF175A4, passive = 0x63CE0FEB,
                 vehicle = 0xEAEB2B0D, mount = 0x3845B1E0, shield = 0x5154DB66,
                 rack = 0xA98BB156, charge = 0xEAC335A1, jumppack = 0x54270608, recharge = 0x1F42878E,
-                warp = 0xA7813546, deposit = 0xC435BA85, package = 0x7A858691, reload = 0x991D454E }
+                warp = 0xA7813546, deposit = 0xC435BA85, package = 0x7A858691, reload = 0x991D454E,
+                thrower = 0xA29A84D8, minefield = 0x74FEF89A, mine_spawner = 0x0697FED6 }
 local KINDS = {
     [T_WEAPON] = { name = 'weapon', stride = 1232, keyed = true },
     [T_MAGAZINE] = { name = 'magazine', stride = 160, keyed = true },
@@ -1014,6 +1015,12 @@ KINDS[TYPES.package] = { name = 'loadout package', stride = 32, keyed = true }
 -- WeaponReloadComponentData: +56 reload time (s); 0 on weapons whose magazine attachment sets it
 -- (attachment component 113)
 KINDS[TYPES.reload] = { name = 'reload', stride = 80, keyed = true }
+-- minefields: the pod a minefield stratagem drops (ThrowerComponentData: 2 formations of 376 bytes, the
+-- first throws the mines), the mines' own settings (MinefieldComponentData) and fixed fields
+-- (MineSpawnerComponentData)
+KINDS[TYPES.thrower] = { name = 'mine thrower', stride = 752, keyed = true }
+KINDS[TYPES.minefield] = { name = 'minefield', stride = 44, keyed = true }
+KINDS[TYPES.mine_spawner] = { name = 'mine spawner', stride = 32, keyed = true }
 -- the tables the panel waits for (stratagem groups are taken as they come)
 local KIND_ORDER = { T_WEAPON, T_MAGAZINE, T_ROUNDS, T_FIRE, T_PROJECTILE, T_DAMAGE, T_BEAM_WEAPON, T_BEAM,
                      T_EXPLOSION, T_ORBITAL, T_HEAT, T_SPRAY, T_STATUS, T_MELEE, TYPES.arc_weapon, TYPES.arc,
@@ -1220,6 +1227,7 @@ local function write_field(f, value, plain)
     if not entry then return false, 'table not found' end
     if read_field(f) == nil then return false, 'current value implausible' end
     default_of(f)
+    if f.most and value > f.most then value = f.most end
     local bytes, done = encode(f, value), {}
     for _, block in ipairs(entry.copies) do
         local at = block + HEADER_BYTES + f.offset
@@ -2419,6 +2427,62 @@ KINDS[TYPES.jumppack].backpack = function(entry, key, ammo)
     end
 end
 
+-- A minefield stratagem's rows, by its pod (`key`): thrower (formation 1): +40 panels, +44 mines per panel,
+-- +248 arming time, +260 / +264 throw velocity min / max, +280 spread (degrees); spawner: +8 / +12 field
+-- width / depth, +16 / +20 mines wide / deep, +24 position scatter; minefield: +8 trigger delay, +12 chain
+-- reaction delay, +24 explosion (its damage and radii). true when `key` is one.
+KINDS[TYPES.minefield].rows = function(entry, key)
+    local function at(kind) return tables[kind] and tables[kind].index[key] end
+    local thrower, spawner, mine = at(TYPES.thrower), at(TYPES.mine_spawner), at(TYPES.minefield)
+    if entry.mines or not (thrower or spawner or mine) then return entry.mines end
+    entry.mines = true
+    local function r(section, id, label, kind, offset, storage, min, max, small, big)
+        add_row(entry, section, id, label, storage, { part(id, kind, offset, storage, 1000000) }, min, max, small, big)
+    end
+    if thrower then
+        -- the pod throws each mine from a node of its model (panel_<p>_mine_<m>): more panels or mines than
+        -- it has crashes the game, so these only go down from the game's values
+        -- (`most` caps every write, saved values and presets included)
+        for _, c in ipairs({ { 'mine_panels', 'Panels', 40 }, { 'mine_per_panel', 'Mines per panel', 44 } }) do
+            local f = field_at(TYPES.thrower, thrower + c[3], 'u32', 1000000)
+            f.most = default_of(f) or 0
+            local row = add_row(entry, 'Minefield', c[1], c[2], 'u32', { { id = c[1], field = f } }, 0, f.most, 1, 1)
+            if c[3] == 40 then row.note = 'panels, mines per panel: lower only (more than the default crashes the game)' end
+        end
+        r('Minefield', 'mine_arming', 'Arming time (s)', TYPES.thrower, thrower + 248, 'f32', 0, 60, 0.1, 1)
+        r('Minefield', 'mine_throw_min', 'Throw velocity, min (m/s)', TYPES.thrower, thrower + 260, 'f32', 0, 200, 0.5, 2)
+        r('Minefield', 'mine_throw_max', 'Throw velocity, max (m/s)', TYPES.thrower, thrower + 264, 'f32', 0, 200, 0.5, 2)
+        r('Minefield', 'mine_spread', 'Throw spread (degrees)', TYPES.thrower, thrower + 280, 'f32', 0, 360, 1, 5)
+    end
+    if spawner then
+        r('Minefield', 'mine_wide', 'Mines wide', TYPES.mine_spawner, spawner + 16, 'u32', 1, 48, 1, 1)
+        r('Minefield', 'mine_deep', 'Mines deep', TYPES.mine_spawner, spawner + 20, 'u32', 1, 48, 1, 1)
+        r('Minefield', 'mine_width', 'Field width (m)', TYPES.mine_spawner, spawner + 8, 'f32', 0, 500, 1, 5)
+        r('Minefield', 'mine_depth', 'Field depth (m)', TYPES.mine_spawner, spawner + 12, 'f32', 0, 500, 1, 5)
+        r('Minefield', 'mine_scatter', 'Position scatter (m)', TYPES.mine_spawner, spawner + 24, 'f32', 0, 100, 0.5, 2)
+    end
+    if mine then
+        r('Mine', 'mine_trigger', 'Trigger delay (s)', TYPES.minefield, mine + 8, 'f32', 0, 60, 0.05, 0.5)
+        r('Mine', 'mine_chain', 'Chain reaction delay (s)', TYPES.minefield, mine + 12, 'f32', 0, 60, 0.05, 0.5)
+        local id = read_field(field_at(TYPES.minefield, mine + 24, 'u32', 100000))
+        local xrow = id and id > 0 and tables[T_EXPLOSION] and tables[T_EXPLOSION].index[id]
+        if xrow then
+            local section = 'Mine explosion'
+            local q = read_field(field_at(T_EXPLOSION, xrow + 4, 'u32', 100000))
+            q = q and q > 0 and tables[T_DAMAGE] and tables[T_DAMAGE].index[q]
+            if q then
+                damage_rows(entry, section, 'mine_x_', q)
+                status_rows(entry, section, 'mine_x_', q, 'blast')
+            end
+            for _, f in ipairs({ { 'inner', 'Inner radius (m)', 16 }, { 'outer', 'Outer radius (m)', 20 },
+                                 { 'shockwave', 'Shockwave radius (m)', 24 } }) do
+                r(section, 'mine_x_' .. f[1], f[2], T_EXPLOSION, xrow + f[3], 'f32', 0, 200, 0.1, 1)
+            end
+        end
+    end
+    return true
+end
+
 local function resolve_stratagem(entry)
     local s = entry.stratagem
     local def = s.def
@@ -2481,6 +2545,8 @@ local function resolve_stratagem(entry)
         local rack = rt and rt.index[key]
         local carried = rack and api.read(rt.copies[1] + HEADER_BYTES + rack, 8)
         if carried and #carried == 8 then KINDS[TYPES.jumppack].backpack(entry, carried) end
+        -- a minefield: the pod, or what the stratagem's hellpod carries
+        for _, k in ipairs({ key, carried }) do KINDS[TYPES.minefield].rows(entry, k) end
         for _, k in ipairs({ key, carried }) do
             if KINDS[TYPES.shield].rows(entry, string.format('%08X%08X', u32(k, 4), u32(k, 0))) then return end
         end
@@ -2583,7 +2649,7 @@ local function resolve_throwable(entry, placed)
 end
 
 local function resolve(weapon)
-    weapon.rows, weapon.by_id, weapon.aliases, weapon.backpack = {}, {}, nil, nil
+    weapon.rows, weapon.by_id, weapon.aliases, weapon.backpack, weapon.mines = {}, {}, nil, nil, nil
     if weapon.slot == 'Throwables' then resolve_throwable(weapon); return end
     -- a support weapon you place (the C4 Pack): the backpack that shares its loadout package (its
     -- charges), the charge (health, throw distance) and its explosion
@@ -2946,7 +3012,9 @@ local function prepare(deadline)
         if w.stratagem and not w.stratagem.def and #STRATAGEMS > 0 and w.stratagem.family ~= 'support' then
             log('stratagem ' .. w.name .. ' (' .. w.hash .. '): definition not found; cooldown not editable')
         elseif w.stratagem and w.stratagem.def and w.stratagem.nodes[1] == nil then
-            log('stratagem ' .. w.name .. ' (' .. w.hash .. '): ' .. #w.rows .. ' rows, ' .. #w.stratagem.payloads .. ' payload(s)')
+            local keys = {}
+            for k, key in ipairs(w.stratagem.payloads) do keys[k] = string.format('%08X%08X', u32(key, 4), u32(key, 0)) end
+            log('stratagem ' .. w.name .. ' (' .. w.hash .. '): ' .. #w.rows .. ' rows, payloads ' .. table.concat(keys, ' '))
         end
     end
     set_status('ready', state.weapons .. ' weapons, ' .. (state.throwables or 0) .. ' throwables, ' ..
