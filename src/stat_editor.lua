@@ -1702,6 +1702,7 @@ local function resolve_gun(weapon, key)
                 { part(idp .. 'pellets', T_PROJECTILE, p + 28, 'u32', 1000) }, 1, 100, 1, 5)
         proj('velocity', 'Velocity (m/s)', 32, 100000, 10, 100)
         proj('drag', 'Drag factor', 40, 100, 0.05, 0.5)
+        proj('gravity', 'Gravity factor', 44, 100, 0.05, 0.5)
         proj('pen_slowdown', 'Penetration slowdown', 64, 100, 0.05, 0.25)
         local impact = read_field(field_at(T_PROJECTILE, p + 144, 'u32', 100000))
         local expiry = read_field(field_at(T_PROJECTILE, p + 156, 'u32', 100000))
@@ -2382,6 +2383,8 @@ local function resolve_stratagem(entry)
             if row then
                 local id = 'p' .. record .. '_velocity'
                 add_row(entry, section, id, 'Velocity (m/s)', 'f32', { part(id, T_PROJECTILE, row + 32, 'f32', 100000) }, 0, 100000, 10, 100)
+                id = 'p' .. record .. '_gravity'
+                add_row(entry, section, id, 'Gravity factor', 'f32', { part(id, T_PROJECTILE, row + 44, 'f32', 100000) }, 0, 100, 0.05, 0.5)
             end
         elseif kind == 'X' then
             local row = tables[T_EXPLOSION] and tables[T_EXPLOSION].index[record]
@@ -2492,6 +2495,8 @@ local function resolve_throwable(entry, placed)
             if q then damage_rows(entry, 'Shrapnel', 'shrapnel_', q, 'Shrapnel') end
             add_row(entry, 'Shrapnel', 'shrapnel_velocity', 'Velocity (m/s)', 'f32',
                     { part('shrapnel_velocity', T_PROJECTILE, prow + 32, 'f32', 100000) }, 0, 100000, 10, 100)
+            add_row(entry, 'Shrapnel', 'shrapnel_gravity', 'Gravity factor', 'f32',
+                    { part('shrapnel_gravity', T_PROJECTILE, prow + 44, 'f32', 100000) }, 0, 100, 0.05, 0.5)
             explosion(read_field(field_at(T_PROJECTILE, prow + 144, 'u32', 100000)), 'bomblet_', 'Shrapnel explosion', false)
         end
         return true
