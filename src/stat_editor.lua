@@ -223,7 +223,7 @@ local WEAPONS = {
     { 'APW-1 Anti-Materiel Rifle', 'Support', '89C5493E08CA4207', '' },
     { 'ARC-3 Arc Thrower', 'Support', '96DE9CD50F7306E6', '' },
     { 'B/FLAM-80 Cremator', 'Support', '78A8185F63A70795', 'The flamethrower you carry.' },
-    { 'B/MD C4 Pack', 'Support', '9B75217D8312DD67', '' },
+    { 'B/MD C4 Pack', 'Support', '9B75217D8312DD67', 'The charge backpack, the charge and its blast. Cooldown: Stratagems tab.' },
     { 'CQC-1 One True Flag', 'Support', 'B0F1B354BA1D38D8', '' },
     { 'CQC-20 Breaching Hammer', 'Support', '5F3EC9BDA2BD8553', 'The support hammer delivered by hellpod. The game data files it next to the Machete.' },
     { 'CQC-72 Entrenchment Tool', 'Support', 'E85E623F93F96FB3', 'The support weapon. The CQC-73 is listed under Secondary.' },
@@ -937,7 +937,7 @@ local TYPES = { arc_weapon = 0xB87BA9ED, arc = 0xAFDF0267, health = 0xB3915DE3, 
                 throwable = 0xAF16BCB5, explosive = 0xF5CF9B8C, sticky = 0x9AF175A4, passive = 0x63CE0FEB,
                 vehicle = 0xEAEB2B0D, mount = 0x3845B1E0, shield = 0x5154DB66,
                 rack = 0xA98BB156, charge = 0xEAC335A1, jumppack = 0x54270608, recharge = 0x1F42878E,
-                warp = 0xA7813546, deposit = 0xC435BA85 }
+                warp = 0xA7813546, deposit = 0xC435BA85, package = 0x7A858691 }
 local KINDS = {
     [T_WEAPON] = { name = 'weapon', stride = 1232, keyed = true },
     [T_MAGAZINE] = { name = 'magazine', stride = 160, keyed = true },
@@ -1009,6 +1009,8 @@ local KINDS = {
     [TYPES.warp] = { name = 'warp pack', stride = 632, keyed = true },
     [TYPES.deposit] = { name = 'backpack charges', stride = 152, keyed = true },
 }
+-- LoadoutPackageComponentData: +8 the package the game loads for an entity in the loadout
+KINDS[TYPES.package] = { name = 'loadout package', stride = 32, keyed = true }
 -- the tables the panel waits for (stratagem groups are taken as they come)
 local KIND_ORDER = { T_WEAPON, T_MAGAZINE, T_ROUNDS, T_FIRE, T_PROJECTILE, T_DAMAGE, T_BEAM_WEAPON, T_BEAM,
                      T_EXPLOSION, T_ORBITAL, T_HEAT, T_SPRAY, T_STATUS, T_MELEE, TYPES.arc_weapon, TYPES.arc,
@@ -1950,6 +1952,27 @@ local FAMILY_NOTE = { orbital = 'Orbital strike.', eagle = 'Eagle strike. The re
 
 local function id_hex(id) return string.format('%08X%08X', 0, id) end
 
+-- The entities that share `key`'s loadout package: a support weapon's hellpod rack and what it
+-- carries (the C4 Pack: its detonator, the charge, the charge backpack).
+KINDS[TYPES.package].kin = function(key)
+    local t = tables[TYPES.package]
+    local at = t and t.index[key]
+    local blob = at and api.read(t.copies[1] + HEADER_BYTES, t.payload)
+    if not blob or #blob ~= t.payload then return {} end
+    local package, out = blob:sub(at + 9, at + 16), {}
+    for other, off in pairs(t.index) do
+        if other ~= key and blob:sub(off + 9, off + 16) == package then out[#out + 1] = other end
+    end
+    return out
+end
+
+-- A support weapon you place rather than fire (the C4 Pack: its entity is the charge, which has no
+-- weapon record but an explosive one).
+KINDS[TYPES.package].placed = function(key)
+    return not (tables[T_WEAPON] and tables[T_WEAPON].index[key]) and tables[TYPES.explosive] ~= nil
+           and tables[TYPES.explosive].index[key] ~= nil
+end
+
 -- A sentry's or emplacement's body, when its gun has no health of its own: the entity that mounts the
 -- gun and has health (the Grenadier Battlement's). nil: the gun is the body.
 KINDS[TYPES.health].body = function(gun)
@@ -2398,8 +2421,9 @@ end
 -- distance), explosive component (+0 mode: 0 timed, 3 timed then burning; +12 fuse; +36 explosion),
 -- sticky component (+44 damage row: the throwing knife's hit). The explosion: its damage set,
 -- statuses and radii, its arc (+120: G-31), its shrapnel (+80 count, +84 projectile) and the
--- shrapnel's own explosion (projectile +144: the Pineapple's bomblets).
-local function resolve_throwable(entry)
+-- shrapnel's own explosion (projectile +144: the Pineapple's bomblets). `placed`: a support weapon's
+-- charge (the C4 Pack's), whose counts are its backpack's: only the throw distance, under 'Charge'.
+local function resolve_throwable(entry, placed)
     local function record(kind)
         local t = tables[kind]
         return t and t.index[entry.key]
@@ -2409,11 +2433,11 @@ local function resolve_throwable(entry)
     end
     local th = record(TYPES.throwable)
     if th then
-        for _, r in ipairs({ { 'throw_start', 'Starting count', 100 }, { 'throw_max', 'Max carried', 104 },
-                             { 'throw_supply', 'From supply', 108 } }) do
+        for _, r in ipairs(placed and {} or { { 'throw_start', 'Starting count', 100 }, { 'throw_max', 'Max carried', 104 },
+                                              { 'throw_supply', 'From supply', 108 } }) do
             add_row(entry, 'Throwable', r[1], r[2], 'u32', { part(r[1], TYPES.throwable, th + r[3], 'u32', 10000) }, 0, 999, 1, 5)
         end
-        add_row(entry, 'Throwable', 'throw_distance', 'Max throw distance (m)', 'f32',
+        add_row(entry, placed and 'Charge' or 'Throwable', 'throw_distance', 'Max throw distance (m)', 'f32',
                 { part('throw_distance', TYPES.throwable, th + 16, 'f32', 100000) }, 0, 200, 0.5, 5)
     end
     KINDS[TYPES.shield].rows(entry, entry.hash)   -- the G/SH-39's shield
@@ -2473,6 +2497,17 @@ end
 local function resolve(weapon)
     weapon.rows, weapon.by_id, weapon.aliases, weapon.backpack = {}, {}, nil, nil
     if weapon.slot == 'Throwables' then resolve_throwable(weapon); return end
+    -- a support weapon you place (the C4 Pack): the backpack that shares its loadout package (its
+    -- charges), the charge (health, throw distance) and its explosion
+    if weapon.slot == 'Support' and KINDS[TYPES.package].placed(weapon.key) then
+        local dt = tables[TYPES.deposit]
+        for _, k in ipairs(KINDS[TYPES.package].kin(weapon.key)) do
+            if dt and dt.index[k] then KINDS[TYPES.jumppack].backpack(weapon, k) end
+        end
+        unit_rows(weapon, weapon.key, 'Charge', 'charge_')
+        resolve_throwable(weapon, true)
+        return
+    end
     if weapon.passive then KINDS[TYPES.passive].resolve(weapon); return end
     if weapon.stratagem then resolve_stratagem(weapon); return end
     if weapon.attachment then
