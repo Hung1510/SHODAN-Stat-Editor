@@ -1,6 +1,6 @@
 -- HD2-Addon: mods/shodan/stat_editor
--- SHODAN Stat Editor v2.2.0 by SHODAN. Requires Bingus Shared Loader (API 1).
-local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '2.2.0', author = 'SHODAN', log = 'SHODANStatEditor.log' }
+-- SHODAN Stat Editor v2.3.0 by SHODAN. Requires Bingus Shared Loader (API 1).
+local MOD = { global = 'ShodanStatEditor', title = 'SHODAN Stat Editor', version = '2.3.0', author = 'SHODAN', log = 'SHODANStatEditor.log' }
 -- ammunition types: the game's names, by the text id of the item (its English text)
 MOD.ammo_names = {
     [0x046FF548] = '5.5x50mm Ripper',
@@ -2623,6 +2623,11 @@ KINDS[T_PROJECTILE].swap_row = function(weapon, sources, shots)
     end
     local row = add_row(weapon, 'Projectile swap', 'projectile', 'Projectile fired (id)', 'u32', parts, 1, 100000, 1, 10)
     row.choice = true
+    -- under the row: what a swap changes and what it keeps (drawn below it, `after_h` units)
+    row.after = { "Swapping makes the shot the chosen weapon's, your edits to it included: damage,",
+                  'armor penetration, forces, velocity, drag, gravity, pellets and explosions. Kept: this',
+                  "weapon's fire rate, ammo, handling and heat. To tune the shot, edit the chosen weapon." }
+    row.after_h = #row.after * 16 + 6
     row.note = function(others)
         local spec, now, own = KINDS[T_PROJECTILE], read_field(parts[1].field), default_of(parts[1].field)
         local shot = spec.by_id and spec.by_id[now]
@@ -4044,9 +4049,10 @@ local function draw(width, height)
         end
         -- rows get closer together when there are too many to fit at full spacing; past 22 units
         -- apart the list scrolls (Up/Down follow the chosen row; buttons below page through it)
-        local sections = 0
+        local sections, below = 0, 0
         for n, row in ipairs(weapon.rows) do
             if n == 1 or row.section ~= weapon.rows[n - 1].section then sections = sections + 1 end
+            below = below + (row.after_h or 0)
         end
         -- this weapon's presets, under its stats
         local sy = H - 70 - 34
@@ -4060,7 +4066,7 @@ local function draw(width, height)
         button('wpreset:load', 'Load', x0 + 412, sy, 90, 30, chosen ~= nil)
         button('wpreset:clear', 'Clear', x0 + 508, sy, 90, 30, chosen ~= nil)
         local bottom = H - 70 - 40
-        local pitch = math.floor((bottom - y - sections * 24) / math.max(1, #weapon.rows))
+        local pitch = math.floor((bottom - y - sections * 24 - below) / math.max(1, #weapon.rows))
         local scrolling = pitch < 22
         if scrolling then
             pitch, bottom = 24, bottom - 36
@@ -4072,7 +4078,7 @@ local function draw(width, height)
         local top = y
         for n, row in ipairs(weapon.rows) do
             if n >= ui.scroll then
-                if y + pitch + (row.section ~= section and 24 or 0) > bottom then
+                if y + pitch + (row.section ~= section and 24 or 0) + (row.after_h or 0) > bottom then
                     ui.last_visible = n - 1
                     break
                 end
@@ -4116,9 +4122,11 @@ local function draw(width, height)
                 region('row:' .. n, x0 - 6, y - 1, 430, pitch - 1)
                 region('value:' .. n, 696, y, 88, bh, ok)
                 y = y + pitch
+                for k, line in ipairs(row.after or {}) do text(line, x0, y + 2 + (k - 1) * 16, 14, MUTED, W - x0 - 20) end
+                y = y + (row.after_h or 0)
             end
         end
-        ui.sbar = nil
+        ui.sbar, ui.last_page = nil, nil
         if scrolling then
             -- scroll bar: a thin track at the panel's right edge, its thumb the part in view (drag it,
             -- or click the track to page)
@@ -4126,13 +4134,15 @@ local function draw(width, height)
             local shown = math.max(1, ui.last_visible - ui.scroll + 1)
             -- the furthest scroll: the first row of the last page, counted from the end (a page's section
             -- headers take room, so the page in view says nothing about how many rows the last one holds)
-            local last_page, changes = total, 0
+            local last_page, changes, under = total, 0, weapon.rows[total].after_h or 0
             for n = total - 1, 1, -1 do
                 if weapon.rows[n + 1].section ~= weapon.rows[n].section then changes = changes + 1 end
-                if (total - n + 1) * pitch + 24 * (1 + changes) > len then break end
+                under = under + (weapon.rows[n].after_h or 0)
+                if (total - n + 1) * pitch + 24 * (1 + changes) + under > len then break end
                 last_page = n
             end
             local span = math.max(1, last_page - 1)
+            ui.last_page = last_page
             local th = math.max(24, math.min(len, len * shown / total))
             local ty = top + (len - th) * math.min(1, (ui.scroll - 1) / span)
             rect(989, top, 5, len, color(28, 34, 42), 951)
@@ -4409,7 +4419,11 @@ local function keyboard(now)
     -- keep the chosen row in view (the next draw settles the exact last visible row)
     if moved then
         if ui.row < ui.scroll then ui.scroll = ui.row
-        elseif ui.last_visible and ui.row > ui.last_visible then ui.scroll = ui.scroll + ui.row - ui.last_visible end
+        elseif ui.last_visible and ui.row > ui.last_visible then
+            ui.scroll = ui.scroll + ui.row - ui.last_visible
+            -- the last row (and any note under it): the last page
+            if ui.row == #weapon.rows and ui.last_page then ui.scroll = math.max(ui.scroll, ui.last_page) end
+        end
     end
     local row = weapon.rows[ui.row]
     if not row then ui.row = 1; return end
