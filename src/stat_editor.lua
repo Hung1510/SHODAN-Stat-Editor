@@ -1878,6 +1878,18 @@ local function resolve_gun(weapon, key)
         end
         cool('heat_cool', 'Cool-down time, full heat (s)', 128, false)
         if not reload then cool('heat_cool_overheated', 'Cool-down time after overheat (s)', 140, true) end
+        -- wind-up (Sickles, Scythe, Quasar...): +148 the charge it needs to fire, +152 the charge gained
+        -- per second holding the trigger, +156 lost per second once let go; times: that charge over the rate
+        local needed = hf(148)
+        local function wind(id, label, offset)
+            local c = read_field(needed)
+            if not c or c <= 0 then return end
+            local row = add_row(weapon, 'Wind-up', id, label, 'f32', { { id = id, field = hf(offset) } }, 0.01, 3600, 0.05, 0.25)
+            row.span = function() return read_field(needed) end
+            row.span_default = function() return default_of(needed) end
+        end
+        wind('windup', 'Wind-up time (s)', 152)
+        wind('winddown', 'Wind-down time, released (s)', 156)
         -- heat levels (+0: 3 of 24 bytes: +0 heat it starts at, +4 projectile fired from there on, +20
         -- status effect put on the shooter: its damage row, status row +44). The LAS-17 Double-Edge
         -- Sickle's damage ramp and self-damage; below the first level it fires the fire mode's projectile.
