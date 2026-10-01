@@ -937,7 +937,7 @@ local TYPES = { arc_weapon = 0xB87BA9ED, arc = 0xAFDF0267, health = 0xB3915DE3, 
                 throwable = 0xAF16BCB5, explosive = 0xF5CF9B8C, sticky = 0x9AF175A4, passive = 0x63CE0FEB,
                 vehicle = 0xEAEB2B0D, mount = 0x3845B1E0, shield = 0x5154DB66,
                 rack = 0xA98BB156, charge = 0xEAC335A1, jumppack = 0x54270608, recharge = 0x1F42878E,
-                warp = 0xA7813546, deposit = 0xC435BA85, package = 0x7A858691 }
+                warp = 0xA7813546, deposit = 0xC435BA85, package = 0x7A858691, reload = 0x991D454E }
 local KINDS = {
     [T_WEAPON] = { name = 'weapon', stride = 1232, keyed = true },
     [T_MAGAZINE] = { name = 'magazine', stride = 160, keyed = true },
@@ -1011,6 +1011,9 @@ local KINDS = {
 }
 -- LoadoutPackageComponentData: +8 the package the game loads for an entity in the loadout
 KINDS[TYPES.package] = { name = 'loadout package', stride = 32, keyed = true }
+-- WeaponReloadComponentData: +56 reload time (s); 0 on weapons whose magazine attachment sets it
+-- (attachment component 113)
+KINDS[TYPES.reload] = { name = 'reload', stride = 80, keyed = true }
 -- the tables the panel waits for (stratagem groups are taken as they come)
 local KIND_ORDER = { T_WEAPON, T_MAGAZINE, T_ROUNDS, T_FIRE, T_PROJECTILE, T_DAMAGE, T_BEAM_WEAPON, T_BEAM,
                      T_EXPLOSION, T_ORBITAL, T_HEAT, T_SPRAY, T_STATUS, T_MELEE, TYPES.arc_weapon, TYPES.arc,
@@ -1319,12 +1322,12 @@ KINDS[TYPES.items].words = function(t, r)
     local count, first = peek4(d + at[1] + slot * 8), peek4(d + at[1] + slot * 8 + 4)
     for c = first or 0, (first or 0) + (count or 0) - 1 do
         local comp = peek4(d + at[2] + c * 12)
-        if comp == 5 or comp == 266 or comp == 236 then
+        if comp == 5 or comp == 266 or comp == 236 or comp == 113 then
             local fd, nd = peek4(d + at[2] + c * 12 + 4), peek4(d + at[2] + c * 12 + 8)
             for x = fd, fd + nd - 1 do
                 local offset, size, data = peek4(d + at[3] + x * 12), peek4(d + at[3] + x * 12 + 4), peek4(d + at[3] + x * 12 + 8)
                 for w = 0, size - 4, 4 do
-                    if comp ~= 236 or (offset + w >= 956 and offset + w < 1020) then
+                    if (comp ~= 236 or (offset + w >= 956 and offset + w < 1020)) and (comp ~= 113 or offset + w == 56) then
                         out[comp .. ':' .. (offset + w)] = at[4] + data + w
                     end
                 end
@@ -1608,7 +1611,7 @@ local function resolve_gun(weapon, key)
     links = ok and weapon.key == key and links
     local function linked(kind, at, offset, storage, limit)
         local own = field_at(kind, at + offset, storage, limit)
-        local link = links and links[(kind == T_MAGAZINE and 5 or 266) .. ':' .. offset]
+        local link = links and links[(kind == T_MAGAZINE and 5 or kind == TYPES.reload and 113 or 266) .. ':' .. offset]
         if not link then return own end
         local lead = link.lead and field_at(TYPES.deltas, link.lead, storage, limit) or own
         lead.mirrors = lead.mirrors or {}
@@ -1852,6 +1855,15 @@ local function resolve_gun(weapon, key)
         rnd('rounds_start', 'Starting rounds', 88)
         rnd('rounds_supply', 'Rounds from supply', 84)
         rnd('rounds_max', 'Max spare rounds', 80)
+    end
+    -- reload time: the weapon's own (+56), or its magazine's (an attachment sets it over the weapon's 0).
+    -- The game scales the reload animation to it; 0: the animation's own length (no scaling).
+    local reload = (magazine or rounds or record(T_HEAT)) and record(TYPES.reload)
+    local rf = reload and linked(TYPES.reload, reload, 56, 'f32', 1000)
+    local rt = rf and default_of(rf)
+    if rt and rt >= 0 and rt < 1000 then
+        add_row(weapon, 'Ammo', 'reload_time', rt > 0 and 'Reload time (s)' or 'Reload time (s; 0: as animated)', 'f32',
+                { { id = 'reload_time', field = rf } }, 0, 60, 0.1, 0.5)
     end
     -- heat weapons (lasers, Quasar): +84/+88/+92 heatsinks, +96 overheat threshold, +100 heat it
     -- recovers to after an overheat, +116/+120 heat per shot / second, +128 cooling per second,
