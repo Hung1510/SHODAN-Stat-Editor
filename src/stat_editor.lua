@@ -3982,7 +3982,15 @@ local function draw(width, height)
             -- or click the track to page)
             local len, total = bottom - top, #weapon.rows
             local shown = math.max(1, ui.last_visible - ui.scroll + 1)
-            local span = math.max(1, total - shown)
+            -- the furthest scroll: the first row of the last page, counted from the end (a page's section
+            -- headers take room, so the page in view says nothing about how many rows the last one holds)
+            local last_page, changes = total, 0
+            for n = total - 1, 1, -1 do
+                if weapon.rows[n + 1].section ~= weapon.rows[n].section then changes = changes + 1 end
+                if (total - n + 1) * pitch + 24 * (1 + changes) > len then break end
+                last_page = n
+            end
+            local span = math.max(1, last_page - 1)
             local th = math.max(24, math.min(len, len * shown / total))
             local ty = top + (len - th) * math.min(1, (ui.scroll - 1) / span)
             rect(989, top, 5, len, color(28, 34, 42), 951)
