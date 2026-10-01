@@ -21,7 +21,7 @@ saved, and are applied again automatically every time the game starts. Keep setu
 | Arc | Range, chain length, chain split (Arc Thrower, Blitzer, K-9 Guard Dog, Tesla Tower) |
 | Burning / Gas | How much fire or gas each hit applies (flamethrowers, Coyote, Hyena, incendiary shotguns, lasers, EAT-700, gas weapons); burn / gas damage, armor penetration and duration |
 | Fire | Fire rate (every fire mode the weapon has) |
-| Ammo | Magazine size, starting magazines, magazines from supply, max spare magazines (or rounds, for weapons loaded by the round), reload time, rounds per reload and reload allowed below (clip weapons) |
+| Ammo | Magazine size, starting magazines, magazines from supply, max spare magazines (or rounds, for weapons loaded by the round), reload time, rounds per reload and reload allowed below (clip weapons). Ammo counts go up to 100,000, so belt-fed weapons (Maxigun, Cremator) can carry 2000 rounds or more; their backpack ammo is on the weapon's Backpack section |
 | Handling | Recoil (horizontal, vertical), spread (horizontal, vertical), sway, ergonomics |
 | Heat | Overheat threshold, heat per shot / per second, cool-down time (lasers, Quasar Cannon), heatsinks |
 | Projectile swap | The projectile the weapon fires: pick another weapon's (by name, or type its id) |

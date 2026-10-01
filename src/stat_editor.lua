@@ -1255,6 +1255,8 @@ end
 -- together). `small`/`big` are the step sizes; `max` bounds what the panel lets you set.
 local weapons, by_hash = {}, {}
 
+local AMMO_MAX = 100000
+
 local function hash_key(hex16)
     local hi, lo = tonumber(hex16:sub(1, 8), 16), tonumber(hex16:sub(9, 16), 16)
     return u32_bytes(lo) .. u32_bytes(hi)
@@ -1849,16 +1851,16 @@ local function resolve_gun(weapon, key)
             add_row(weapon, 'Ammo', id, label, 'u32', { { id = id, field = linked(T_MAGAZINE, magazine, offset, 'u32', 100000) } },
                     min, max, 1, big)
         end
-        mag('capacity', 'Magazine size', 136, 1, 9999, 10)
-        mag('mags_start', 'Starting magazines', 140, 0, 999, 5)
-        mag('mags_supply', 'Magazines from supply', 144, 0, 999, 5)
-        mag('mags_max', 'Max spare magazines', 148, 0, 999, 5)
+        mag('capacity', 'Magazine size', 136, 1, AMMO_MAX, 10)
+        mag('mags_start', 'Starting magazines', 140, 0, AMMO_MAX, 5)
+        mag('mags_supply', 'Magazines from supply', 144, 0, AMMO_MAX, 5)
+        mag('mags_max', 'Max spare magazines', 148, 0, AMMO_MAX, 5)
     end
     if rounds then
         add_row(weapon, 'Ammo', 'rounds_capacity', 'Rounds loaded', 'f32',
-                { part('rounds_capacity', T_ROUNDS, rounds + 72, 'f32', 100000) }, 1, 999, 1, 5)
+                { part('rounds_capacity', T_ROUNDS, rounds + 72, 'f32', 100000) }, 1, AMMO_MAX, 1, 10)
         local function rnd(id, label, offset)
-            add_row(weapon, 'Ammo', id, label, 'u32', { part(id, T_ROUNDS, rounds + offset, 'u32', 100000) }, 0, 9999, 1, 10)
+            add_row(weapon, 'Ammo', id, label, 'u32', { part(id, T_ROUNDS, rounds + offset, 'u32', 100000) }, 0, AMMO_MAX, 1, 10)
         end
         rnd('rounds_start', 'Starting rounds', 88)
         rnd('rounds_supply', 'Rounds from supply', 84)
@@ -1866,10 +1868,10 @@ local function resolve_gun(weapon, key)
         -- +92 rounds added per reload (a clip: Autocannon 5, Veto 6; else 1, a shell at a time); +96 a reload
         -- is allowed below this many rounds left (f32; 0: below the capacity)
         add_row(weapon, 'Ammo', 'rounds_per_reload', 'Rounds per reload', 'u32',
-                { part('rounds_per_reload', T_ROUNDS, rounds + 92, 'u32', 100000) }, 1, 999, 1, 5)
+                { part('rounds_per_reload', T_ROUNDS, rounds + 92, 'u32', 100000) }, 1, AMMO_MAX, 1, 5)
         if (read_field(field_at(T_ROUNDS, rounds + 96, 'f32', 100000)) or 0) > 0 then
             add_row(weapon, 'Ammo', 'reload_below', 'Reload allowed below (rounds)', 'f32',
-                    { part('reload_below', T_ROUNDS, rounds + 96, 'f32', 100000) }, 1, 999, 1, 5)
+                    { part('reload_below', T_ROUNDS, rounds + 96, 'f32', 100000) }, 1, AMMO_MAX, 1, 5)
         end
     end
     -- reload time: the weapon's own (+56), or its magazine's (an attachment sets it over the weapon's 0).
@@ -2414,11 +2416,11 @@ KINDS[TYPES.jumppack].backpack = function(entry, key, ammo)
         -- a support weapon's ammo backpack: the spare rockets / magazines it reloads from, or the rounds
         -- a belt-fed weapon fires from it
         local first = add_row(entry, 'Backpack', 'bp_ammo', 'Ammo carried', 'u32',
-                              { part('bp_ammo', TYPES.deposit, deposit, 'u32', 1000000) }, 0, 100000, 1, 10)
+                              { part('bp_ammo', TYPES.deposit, deposit, 'u32', 1000000) }, 0, AMMO_MAX, 1, 10)
         first.note = 'the spare ammo in its backpack; read when the backpack is called in'
         local start = read_field(field_at(TYPES.deposit, deposit + 4, 'u32', 0xFFFFFFFF))
-        if start and start ~= 0xFFFFFFFF then r('Backpack', 'bp_ammo_start', 'Ammo at the start', TYPES.deposit, deposit + 4, 'u32', 100000, 1, 10) end
-        r('Backpack', 'bp_ammo_supply', 'Ammo from resupply', TYPES.deposit, deposit + 8, 'u32', 100000, 1, 10)
+        if start and start ~= 0xFFFFFFFF then r('Backpack', 'bp_ammo_start', 'Ammo at the start', TYPES.deposit, deposit + 4, 'u32', AMMO_MAX, 1, 10) end
+        r('Backpack', 'bp_ammo_supply', 'Ammo from resupply', TYPES.deposit, deposit + 8, 'u32', AMMO_MAX, 1, 10)
     elseif deposit then
         r('Backpack', 'bp_charges', 'Charges', TYPES.deposit, deposit, 'u32', 999, 1, 5)
         local start = read_field(field_at(TYPES.deposit, deposit + 4, 'u32', 0xFFFFFFFF))
