@@ -1968,6 +1968,10 @@ local function resolve_gun(weapon, key)
         add_row(weapon, 'Handling', 'sway', 'Sway multiplier', 'f32', { follow(w('sway', 104), { 1 }, 1) }, 0, 100, 0.1, 0.5)
         add_row(weapon, 'Handling', 'ergonomics', 'Ergonomics', 'f32', { follow(w('ergonomics', 356), { 0 }, 0) }, 0, 1000, 1, 5)
     end
+    if weapon.key == key and weapon.slot == 'Support' then
+        local pack = KINDS[TYPES.rack].pack(key)
+        if pack then KINDS[TYPES.jumppack].backpack(weapon, pack, true) end
+    end
     if weapon.key == key then KINDS[T_PROJECTILE].swap_row(weapon, sources, shots) end
 end
 
@@ -1995,6 +1999,26 @@ KINDS[TYPES.package].kin = function(key)
         if other ~= key and blob:sub(off + 9, off + 16) == package then out[#out + 1] = other end
     end
     return out
+end
+
+-- The backpack a support weapon's hellpod carries with it (its ammo backpack: Autocannon, Recoilless,
+-- Spear, W.A.S.P., Maxigun, Cremator, Belt-Fed GL, Airburst): a rack holding only the weapon and one
+-- entity with charges (not a crate of several weapons and supply packs).
+KINDS[TYPES.rack].pack = function(key)
+    local rt, dt = tables[TYPES.rack], tables[TYPES.deposit]
+    if not rt or not dt then return nil end
+    local empty = string.rep(' ', 8)
+    for _, at in pairs(rt.index) do
+        local slots = api.read(rt.copies[1] + HEADER_BYTES + at, 512)
+        local has, pack, other = false, nil, false
+        for s = 0, slots and #slots == 512 and 7 or -1 do
+            local k = slots:sub(s * 64 + 1, s * 64 + 8)
+            if k == key then has = true
+            elseif dt.index[k] and (pack == nil or pack == k) then pack = k
+            elseif k ~= empty then other = true end
+        end
+        if has and pack and not other then return pack end
+    end
 end
 
 -- A support weapon you place rather than fire (the C4 Pack: its entity is the charge, which has no
@@ -2293,7 +2317,7 @@ KINDS[TYPES.jumppack].TITLES = {
     ['Guard Dog (Drone)'] = 'AX/AR-23 "Guard Dog"', ['Laser Rifle (Drone)'] = 'AX/LAS-5 "Guard Dog" Rover',
     ['Guard Dog Gas Projector (Drone)'] = 'AX/TX-13 "Guard Dog" Dog Breath',
     ['Guard Dog Flamethrower (Drone)'] = 'AX/FLAM-75 "Guard Dog" Hot Dog', ['Guard Dog (Drone) Stun'] = 'AX/ARC-3 "Guard Dog" K-9' }
-KINDS[TYPES.jumppack].backpack = function(entry, key)
+KINDS[TYPES.jumppack].backpack = function(entry, key, ammo)
     if entry.backpack then return end
     entry.backpack = true
     local function at(kind)
@@ -2358,7 +2382,16 @@ KINDS[TYPES.jumppack].backpack = function(entry, key)
         end
     end
     local deposit = at(TYPES.deposit)
-    if deposit then
+    if deposit and ammo then
+        -- a support weapon's ammo backpack: the spare rockets / magazines it reloads from, or the rounds
+        -- a belt-fed weapon fires from it
+        local first = add_row(entry, 'Backpack', 'bp_ammo', 'Ammo carried', 'u32',
+                              { part('bp_ammo', TYPES.deposit, deposit, 'u32', 1000000) }, 0, 100000, 1, 10)
+        first.note = 'the spare ammo in its backpack; read when the backpack is called in'
+        local start = read_field(field_at(TYPES.deposit, deposit + 4, 'u32', 0xFFFFFFFF))
+        if start and start ~= 0xFFFFFFFF then r('Backpack', 'bp_ammo_start', 'Ammo at the start', TYPES.deposit, deposit + 4, 'u32', 100000, 1, 10) end
+        r('Backpack', 'bp_ammo_supply', 'Ammo from resupply', TYPES.deposit, deposit + 8, 'u32', 100000, 1, 10)
+    elseif deposit then
         r('Backpack', 'bp_charges', 'Charges', TYPES.deposit, deposit, 'u32', 999, 1, 5)
         local start = read_field(field_at(TYPES.deposit, deposit + 4, 'u32', 0xFFFFFFFF))
         if start and start < 1000 then r('Backpack', 'bp_charges_start', 'Starting charges', TYPES.deposit, deposit + 4, 'u32', 999, 1, 5) end
