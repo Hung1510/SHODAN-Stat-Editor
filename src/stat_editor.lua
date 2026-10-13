@@ -1234,7 +1234,7 @@ local function parse_keyed(blob, stride, spec)
     local MAX_UNINDEXED_RECORDS, ZERO8 = 2, string.rep('\0', 8)
     local slack = spec and spec.slack or 0   -- padding after the records
     local total, count, live, top, offset = #blob, 0, 0, -1, 0
-    local fits = {}
+    local fits, alt = {}, {}
     while offset + 16 <= total do
         local slot, pad = u32(blob, offset + 8), u32(blob, offset + 12)
         if pad ~= 0 or slot > 100000 then break end
@@ -1245,11 +1245,17 @@ local function parse_keyed(blob, stride, spec)
         end
         offset = offset + 16
         local array = total - count * 16 - slack
-        if count == 2 * live and array > 0 and array % stride == 0 then
+        -- The game now sizes the bucket array at twice the entities minus 2 (weapon, magazine, fire mode,
+        -- mount and health tables); older builds used exactly twice. The older rule is tried first.
+        if (count == 2 * live or count == 2 * live - 2) and array > 0 and array % stride == 0 then
             local records = array / stride
-            if records > top and records <= live + MAX_UNINDEXED_RECORDS then fits[#fits + 1] = count end
+            if records > top and records <= live + MAX_UNINDEXED_RECORDS then
+                local list = count == 2 * live and fits or alt
+                list[#list + 1] = count
+            end
         end
     end
+    if #fits == 0 then fits = alt end
     if #fits ~= 1 then return nil, #fits .. ' layouts fit (need exactly 1)' end
     local buckets, index, entries = fits[1], {}, 0
     for k = 0, buckets - 1 do
